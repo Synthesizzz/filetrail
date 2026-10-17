@@ -113,8 +113,8 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes, copies }
 }
 
-/** Text with the non-breaking spaces the mod draws (indents, diff lines) read as plain ones. */
-export const plain = (text: string | undefined) => (text ?? '').replace(/ /g, ' ')
+/** Text with the non-breaking spaces the mod draws (indents, diff lines, narrow ones in a row) read as plain ones. */
+export const plain = (text: string | undefined) => (text ?? '').replace(/[\u00a0\u202f]/g, ' ')
 
 /** The text of the element drawn under `key`, spaces plain; '' when it is not drawn. */
 export async function rowText(ui: any, key: string): Promise<string> {

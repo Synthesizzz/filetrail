@@ -7,6 +7,8 @@ export const WIDE_COLUMNS = 100
 
 /** A space no surface collapses or wraps at. */
 export const NBSP = ' '
+/** A narrow one, between the parts of a tree row: a full space set them too far apart (seen live). */
+export const NNBSP = '\u202f'
 
 /** "trail-demo/deep/notes.md" → name "notes.md", dir "trail-demo/deep" ('' at the top). */
 export function splitPath(path: string): { name: string; dir: string } {
@@ -29,4 +31,22 @@ export function keepIndent(text: string): string {
 /** Cuts text to `max` characters with an ellipsis. */
 export function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, Math.max(1, max - 1)) + '…' : text
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/** "17:05" today, "Oct 16 17:05" on another day, in the machine's local time. */
+export function formatAt(at: number, now: number): string {
+  const d = new Date(at)
+  const n = new Date(now)
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
+  return sameDay ? hm : `${MONTHS[d.getMonth()]} ${d.getDate()} ${hm}`
+}
+
+/** A file's time as filetree shows it: `2026-10-02 09:24`, local time. */
+export function stampOf(at: number): string {
+  const d = new Date(at)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }

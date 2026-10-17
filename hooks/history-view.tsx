@@ -5,7 +5,9 @@ import type { EngineInterface } from 'claude-code'
 
 import type { DiffLine, HistoryView, Step, Turn } from '../types'
 import { TONE_SHIMMER } from './files-view'
-import { clip, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS } from './paths'
+import { clip, formatAt, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS } from './paths'
+
+export { formatAt }
 import { rowPresses } from './presses'
 import type { RowProps, Seg } from './row'
 
@@ -15,18 +17,6 @@ export const TIME_COLOR = '#60a5fa'
 type Els = ReturnType<EngineInterface['ui']['resolve']>
 
 export const TIMELINE: HistoryView = { turn: null, file: null, step: 0 }
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const pad = (n: number) => String(n).padStart(2, '0')
-
-/** "17:05" today, "Oct 16 17:05" on another day, in the machine's local time. */
-export function formatAt(at: number, now: number): string {
-  const d = new Date(at)
-  const n = new Date(now)
-  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate()
-  return sameDay ? hm : `${MONTHS[d.getMonth()]} ${d.getDate()} ${hm}`
-}
 
 export function summarize(turn: Turn): { files: number; edits: number; add: number; del: number; problems: number } {
   let add = 0

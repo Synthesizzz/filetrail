@@ -122,3 +122,29 @@ export function dirCounts(git: GitInfo | null, dir: string): DirCounts | null {
   n.added += git.untrackedDirs.filter(d => d.startsWith(prefix)).length
   return n.changed + n.added + n.deleted ? n : null
 }
+
+/** Lines added and removed in the changed files beneath a folder; null when none. */
+export function linesBelow(git: GitInfo | null, dir: string): [number, number] | null {
+  if (!git) return null
+  const prefix = relTo(git.top, dir).toLowerCase().replace(/\/+$/, '') + '/'
+  return sumLines(git, k => k.startsWith(prefix))
+}
+
+function sumLines(git: GitInfo, take: (path: string) => boolean): [number, number] | null {
+  let add = 0
+  let del = 0
+  for (const [k, [a, d]] of Object.entries(git.numstat)) if (take(k)) { add += a; del += d }
+  return add || del ? [add, del] : null
+}
+
+/** The whole repo's changes, for the branch line: the counts by kind and the lines. */
+export function repoSummary(git: GitInfo | null): { counts: DirCounts; lines: [number, number] | null } | null {
+  if (!git) return null
+  const n: DirCounts = { changed: 0, added: git.untrackedDirs.length, deleted: 0 }
+  for (const c of Object.values(git.status)) {
+    if (c === '?' || c === 'A') n.added++
+    else if (c === 'D') n.deleted++
+    else n.changed++
+  }
+  return { counts: n, lines: sumLines(git, () => true) }
+}

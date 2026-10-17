@@ -59,8 +59,29 @@ test('a narrow row fits its region: the Client is as wide as the pane and cuts i
   await ui.resize({ columns: 20, rows: 1, in: key })
   const line = await rowText(ui, key)
   expect([...line].length).toBeLessThanOrEqual(20)
-  expect(line).toMatch(/^ {2}a-rather-long-fil…$/)
+  expect(line).toMatch(/^ {2}· a-rather-long-f…$/)
   await ui.resize({ columns: 80, rows: 1, in: key })
-  expect(await rowText(ui, key)).toBe('  a-rather-long-file-name-for-a-narrow-dock.tsx')
+  expect(await rowText(ui, key)).toBe('  · a-rather-long-file-name-for-a-narrow-dock.tsx')
   await ui.unmount()
+})
+
+test('right-hand runs sit after a spacer, at the row\'s edge', async ($, on) => {
+  const { clock } = world(on, { dirs: { 'C:\\work\\demo': [['a.ts', 'file']] }, git: { top: 'C:/work/demo', status: '## main\0?? a.ts\0', numstat: '' } })
+  await $.session.start(START)
+  await clock.advance(1000)
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  const tree = await ui.drawn({ in: 'row-c:/work/demo/a.ts' })
+  const kids = (tree as any).children ?? (tree as any).props?.children
+  const types = kids.map((k: any) => (k.props?.flexGrow ? 'spacer' : k.props?.flexShrink === 0 ? 'badges' : 'left'))
+  // The left side (indent, icon, name) clips; the spacer; the badges keep their width.
+  expect(types).toEqual(['left', 'spacer', 'badges'])
+  expect(kids[0].props).toMatchObject({ flexShrink: 1, overflow: 'hidden' })
+  await ui.unmount()
+})
+
+test('fitRow drops a file\'s time before cutting the name, and finds the name by its mark', () => {
+  const row: Seg[] = [{ t: '  ' }, { t: '· ' }, { t: 'notes-about-it.md', name: true }, { t: ' Oct 16 10:00', right: true, opt: true }]
+  expect(text(fitRow(row, 40))).toBe('  · notes-about-it.md Oct 16 10:00')
+  expect(fitRow(row, 22).map(s => s.t)).toEqual(['  ', '· ', 'notes-about-it.md'])
+  expect(fitRow(row, 14).map(s => s.t)).toEqual(['  ', '· ', 'notes-abo…'])
 })

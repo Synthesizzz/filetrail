@@ -20,13 +20,16 @@ export function parentOf(path: string): string {
   return at <= 0 ? p : p.slice(0, at)
 }
 
-type Listed = { name: string; kind: 'file' | 'dir' | 'other'; isLink: boolean }
+type Listed = { name: string; kind: 'file' | 'dir' | 'other'; isLink: boolean; mtimeMs?: number }
 
 /** A folder's entries, folders first, then by name ignoring case; `.git` left out. */
 export function toEntries(dir: string, listed: readonly Listed[]): { entries: Entry[]; more: number } {
   const all = listed
     .filter(l => !HIDDEN.has(l.name))
-    .map(l => ({ name: l.name, path: joinPath(dir, l.name), kind: l.kind === 'dir' ? 'dir' as const : 'file' as const }))
+    .map(l => ({
+      name: l.name, path: joinPath(dir, l.name), kind: l.kind === 'dir' ? 'dir' as const : 'file' as const,
+      ...(l.kind !== 'dir' && l.mtimeMs ? { at: l.mtimeMs } : {}),
+    }))
     .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) : a.kind === 'dir' ? -1 : 1))
   return { entries: all.slice(0, MAX_ENTRIES), more: Math.max(0, all.length - MAX_ENTRIES) }
 }

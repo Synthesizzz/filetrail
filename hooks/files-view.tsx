@@ -4,9 +4,10 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Entry, FilesView, GitActionEntry, GitActionKind, GitInfo, SearchIndex, Tone, Turn } from '../types'
-import { dirCounts, dirStatus, fileStatus, lineCounts } from './git'
+import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
+import type { DirCounts } from './git'
 import { relTo } from './history'
-import { NARROW_COLUMNS, NBSP, splitPath } from './paths'
+import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
 import { rowPresses } from './presses'
 import { findFiles } from './search'
@@ -31,6 +32,8 @@ export type FilesActions = {
   open: (path: string) => void
   /** Puts a path on the clipboard of the surface pressed: from the root, or whole. */
   copy: (path: string, full: boolean, surface: string) => void
+  /** Shows every kept git action in the bar, or only the latest again. */
+  toggleGitLog: () => void
 }
 
 /** The search results in place of the tree: file name first, folder dimmed, the best matches on top. */
@@ -39,7 +42,7 @@ function searchResults(els: Els, query: string, index: SearchIndex | null, actio
   if (!index) return <Text key="search-wait" dimColor>Listing the project's files…</Text>
   const { hits, total } = findFiles(index.files, query)
   return (
-    <Box key="search-results" flexDirection="column">
+    <Box key="search-results" flexDirection="column" gap="xs">
       <Text dimColor>
         {total === 0 ? 'No files match.' : total > hits.length ? `${total} matches, the first ${hits.length} shown` : `${total} match${total === 1 ? '' : 'es'}`}
         {index.complete ? '' : ' (the file list was cut short)'}
@@ -108,28 +111,84 @@ export function gitActionSegs(a: GitActionEntry): Seg[] {
   return [{ t: `✗${NBSP}`, c: 'error' }, { t: `${a.verb} failed`, c: 'error' }, ...target]
 }
 
-/** The git bar: the last few git actions Claude ran, under the tree. */
-function gitBar(els: Els, log: readonly GitActionEntry[]) {
-  const { Box, Text } = els
+/**
+ * The git bar: the latest git action Claude ran, with "N more" to show the others
+ * kept (oldest first) and "fewer" to fold them again, so it takes one line at rest.
+ */
+function gitBar(els: Els, log: readonly GitActionEntry[], open: boolean, actions: FilesActions) {
+  const { Box, Text, Button } = els
   const Client = 'Client' in els ? els.Client : undefined
   if (!log.length) return null
+  const shownLog = open ? log : log.slice(-1)
+  const more = log.length - 1
+  const line = (a: GitActionEntry) => {
+    const segs = gitActionSegs(a)
+    // A Client for the shimmer while it runs; nothing to press (no entry in rowPresses).
+    return Client
+      ? <Client key={`git-${a.id}`} module="./row.tsx" flexGrow={1} props={{ segs, hoverAt: -1 } satisfies RowProps} />
+      : <Text key={`git-${a.id}`}>{segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.b ? { bold: true } : {})} {...(s.dim ? { dimColor: true } : {})}>{s.t}</Text>)}</Text>
+  }
+  const toggle = more > 0
+    ? <Button key="git-more" label={open ? 'fewer' : `${more} more`} plain dimColor onPress={() => actions.toggleGitLog()} />
+    : null
   return (
-    <Box key="git-bar" flexDirection="column" marginTop={1}>
-      {log.map(a => {
-        const segs = gitActionSegs(a)
-        // A Client for the shimmer while it runs; nothing to press (no entry in rowPresses).
-        return Client
-          ? <Client key={`git-${a.id}`} module="./row.tsx" width="100%" props={{ segs, hoverAt: -1 } satisfies RowProps} />
-          : <Text key={`git-${a.id}`}>{segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.b ? { bold: true } : {})} {...(s.dim ? { dimColor: true } : {})}>{s.t}</Text>)}</Text>
-      })}
+    <Box key="git-bar" flexDirection="column">
+      {shownLog.map((a, k) => (
+        <Box key={`git-line-${a.id}`} flexDirection="row" gap={1}>
+          {line(a)}
+          {k === shownLog.length - 1 ? toggle : null}
+        </Box>
+      ))}
     </Box>
   )
 }
 
-export function statusColor(code: string): 'warning' | 'success' | 'error' | undefined {
-  if (code === 'M' || code === 'R') return 'warning'
-  if (code === 'A' || code === '?') return 'success'
-  if (code === 'D' || code === 'U') return 'error'
+/** A status as VS Code's explorer letters it: U for untracked, C for a conflict, the code itself otherwise. */
+export function gitLetter(code: string): string {
+  if (code === '?') return 'U'
+  if (code === 'U') return 'C'
+  return code
+}
+
+/** The folder colour, filetree's accent: a blue that reads on light and dark backgrounds. */
+export const FOLDER_COLOR = '#5b9bd5'
+/** The selected row's fill: filetree's selection grey, at a third so the text stays legible in either theme. */
+export const SELECTED_BG = '#6b728055'
+
+/** A folder's counts by kind, at the right edge: new, changed, deleted, as filetree orders them. */
+function countSegs(n: DirCounts): Seg[] {
+  const out: Seg[] = []
+  if (n.added) out.push({ t: `${NNBSP}?:${n.added}`, c: GIT_HEX.added, right: true })
+  if (n.changed) out.push({ t: `${NNBSP}M:${n.changed}`, c: GIT_HEX.changed, right: true })
+  if (n.deleted) out.push({ t: `${NNBSP}D:${n.deleted}`, c: GIT_HEX.deleted, right: true })
+  return out
+}
+
+/** The whole repo's changes, for the branch line; "clean" when there are none. */
+function repoTotals(els: Els, git: GitInfo | null) {
+  const { Text } = els
+  const sum = repoSummary(git)
+  if (!sum) return null
+  const runs = [...(sum.lines?.[0] ? [{ t: `+${sum.lines[0]}`, c: GIT_HEX.add }] : []), ...(sum.lines?.[1] ? [{ t: `-${sum.lines[1]}`, c: GIT_HEX.del }] : []), ...countSegs(sum.counts).map(s => ({ t: s.t.replace(NNBSP, ''), c: s.c! }))]
+  if (!runs.length) return <Text key="repo-totals" dimColor>clean</Text>
+  return <Text key="repo-totals">{runs.map((r, k) => <Text color={r.c}>{(k ? ' ' : '') + r.t}</Text>)}</Text>
+}
+
+/**
+ * filetree's softer git palette, easier on the eye than the theme's own success, warning
+ * and error, in a tree where many names carry one: yellow changed, green new, blue renamed,
+ * red deleted or conflicted, and its greens and reds for lines added and removed.
+ */
+export const GIT_HEX = {
+  changed: '#e5c07b', added: '#98c379', renamed: '#61afef', deleted: '#d0605e',
+  add: '#98c379', del: '#e06c75', muted: '#808a96',
+} as const
+
+export function statusColor(code: string): string | undefined {
+  if (code === 'M') return GIT_HEX.changed
+  if (code === 'R') return GIT_HEX.renamed
+  if (code === 'A' || code === '?') return GIT_HEX.added
+  if (code === 'D' || code === 'U') return GIT_HEX.deleted
   return undefined
 }
 
@@ -161,16 +220,23 @@ export function filesView(
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
 
   return (
-    <Box key="files" flexDirection="column">
-      {/* One line each: side by side, a long folder name and the branch both wrapped in a narrow dock. */}
-      <Box key="files-head" flexDirection="column">
-        <Text bold wrap="truncate-end">{name}</Text>
-        <Text dimColor={!git} wrap="truncate-end" {...(git ? { color: 'claude' } : {})}>{branchText(git)}</Text>
+    // Step-named gaps: the desktop sizes them on its own scale (seen live: rows and sections ran together),
+    // the terminal draws `xs` down as no line and `md` as one, as before.
+    <Box key="files" flexDirection="column" gap="md">
+      {/* As filetree heads its tree: the folder, then the branch and its upstream with the repo's changes at the right. */}
+      <Box key="files-head" flexDirection="column" gap="xs">
+        <Text bold color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
+        <Box key="branch-line" flexDirection="row" gap={1}>
+          <Text dimColor={!git} wrap="truncate-end" {...(git?.branch ? { color: 'claude', bold: true } : {})}>{branchText(git)}</Text>
+          {git?.branch?.upstream ? <Text dimColor wrap="truncate-end">{git.branch.upstream}</Text> : null}
+          <Box flexGrow={1} />
+          {repoTotals(els, git)}
+        </Box>
       </Box>
       {/* Under the branch, not under the tree: the pane scrolls as one, so a footer below a long tree is out of sight. */}
-      {gitBar(els, gitLog)}
+      {gitBar(els, gitLog, files.gitOpen === true, actions)}
       {Input && (
-        <Box key="search-row" flexDirection="row" gap={1} marginTop={1}>
+        <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">
             <Input key="search" placeholder="Search files" value={query} onInput={(v: string) => actions.search(v)} onSubmit={(v: string) => actions.search(v)} />
           </Box>
@@ -179,27 +245,27 @@ export function filesView(
       )}
       {/* The selected file rides along with every prompt until ✕: say so plainly, since it changes what Claude reads. */}
       {files.selected !== null && (
-        <Box key="selected" flexDirection="column" marginTop={1}>
+        <Box key="selected" flexDirection="column" gap="xs">
           <Box key="selected-name" flexDirection="row" flexWrap="wrap" gap={1}>
             <Text color="claude">Claude sees:</Text>
             {width < NARROW_COLUMNS
               ? <Text bold>{splitPath(relTo(root, files.selected)).name}</Text>
               : <Text bold wrap="wrap">{relTo(root, files.selected)}</Text>}
-            {/* No hotkey: the desktop draws its chip beside the label, which read as "X ✕" (seen live). */}
-            <Button key="unselect" label="✕" plain dimColor onPress={() => actions.unselect()} />
-          </Box>
-          <Box key="selected-actions" flexDirection="row" flexWrap="wrap" gap={1}>
             {width < NARROW_COLUMNS && splitPath(relTo(root, files.selected)).dir
               ? <Text dimColor>{splitPath(relTo(root, files.selected)).dir}</Text>
               : null}
+            {/* No hotkey: the desktop draws its chip beside the label, which read as "X ✕" (seen live). */}
+            <Button key="unselect" label="✕" plain dimColor onPress={() => actions.unselect()} />
+          </Box>
+          {/* Every action on one row, wrapping only when the dock is too narrow. */}
+          <Box key="selected-tools" flexDirection="row" flexWrap="wrap" gap={1}>
             {selectedSteps
               ? <Button key="file-history" label={`History (${selectedSteps})`} dimColor onPress={() => actions.history(files.selected!)} />
-              : <Text dimColor>· no edits recorded</Text>}
-          </Box>
-          <Box key="selected-tools" flexDirection="row" flexWrap="wrap" gap={1}>
+              : null}
             <Button key="open-file" label="Open" dimColor onPress={() => actions.open(files.selected!)} />
             <Button key="copy-path" label="Copy path" dimColor onPress={press => actions.copy(files.selected!, false, press.surface)} />
-            <Button key="copy-full" label="Copy full path" dimColor onPress={press => actions.copy(files.selected!, true, press.surface)} />
+            <Button key="copy-full" label="Full path" dimColor onPress={press => actions.copy(files.selected!, true, press.surface)} />
+            {selectedSteps ? null : <Text dimColor>no edits recorded</Text>}
           </Box>
         </Box>
       )}
@@ -220,26 +286,42 @@ export function filesView(
         // The desktop draws no `inverse`: a selected file also gets a marker and bold, which every surface shows.
         // The indent is non-breaking spaces in a monospace run: the desktop collapses leading plain spaces,
         // and a proportional font would set the arrow and the blank slot at different widths.
+        // As filetree draws on the desktop (its Nerd Font icons have no glyph there): a blue
+        // ■ for a folder, a · for a file; a dotfile's name is dimmed unless git or Claude colours it.
+        const dotfile = entry.name.startsWith('.')
         const segs: Seg[] = [
-          { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected ? '›' : NBSP) + NBSP, mono: true },
-          { t: entry.name + (isDir ? '/' : ''), ...(color ? { c: color } : {}), ...(tone || isSelected ? { b: true } : {}), ...(isSelected ? { u: true } : {}), ...(tone ? { sh: TONE_SHIMMER[tone] } : {}) },
+          // The selected row is filled where a Client draws it; a marker stands in elsewhere.
+          { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected && !Client ? '›' : NBSP) + NNBSP, mono: true },
+          { t: (isDir ? '■' : '·') + NNBSP, ...(isDir ? { c: FOLDER_COLOR } : {}), dim: !isDir || dotfile },
+          {
+            t: entry.name + (isDir ? '/' : ''), name: true,
+            ...(color ? { c: color } : dotfile ? { dim: true } : {}),
+            ...(tone || isSelected ? { b: true } : {}), ...(tone ? { sh: TONE_SHIMMER[tone] } : {}),
+          },
         ]
-        if (tone) segs.push({ t: `${NBSP}· ${TONE_WORD[tone]}`, c: TONE_COLOR[tone], b: true, sh: TONE_SHIMMER[tone] })
-        else if (last && last.path === lower(entry.path)) segs.push({ t: `${NBSP}◂`, c: TONE_COLOR[last.tone] })
-        if (edits) segs.push({ t: `${NBSP}●${edits}`, c: 'claude' })
-        if (isDir && !isOpen && hasEditsBelow(counts, entry.path)) segs.push({ t: `${NBSP}●`, c: 'claude', dim: true })
-        if (lines) segs.push({ t: `${NBSP}+${lines[0]}`, c: 'success' }, { t: `${NBSP}-${lines[1]}`, c: 'error' })
-        // A folder says how many changes it holds, by kind; a file (or an untracked folder) its letter.
+        if (tone) segs.push({ t: `${NNBSP}· ${TONE_WORD[tone]}`, c: TONE_COLOR[tone], b: true, sh: TONE_SHIMMER[tone] })
+        else if (last && last.path === lower(entry.path)) segs.push({ t: `${NNBSP}◂`, c: TONE_COLOR[last.tone] })
+        // At the right edge, as VS Code's explorer does: Claude's edits, the lines changed, then
+        // one git letter for a file (or a folder untracked as a whole) and a dot for a folder
+        // with changes inside.
+        if (edits) segs.push({ t: `${NNBSP}●${edits}`, c: 'claude', right: true })
+        if (isDir && !isOpen && hasEditsBelow(counts, entry.path)) segs.push({ t: `${NNBSP}●`, c: 'claude', dim: true, right: true })
+        // Lines changed (a folder sums its files'), then a file's git letter or a folder's
+        // counts by kind, as filetree shows them; a clean file shows when it last changed.
+        const sum = isDir ? linesBelow(git, entry.path) : lines
+        // Only what is there, as filetree shows it: no +0 or -0.
+        if (sum?.[0]) segs.push({ t: `${NNBSP}+${sum[0]}`, c: GIT_HEX.add, right: true })
+        if (sum?.[1]) segs.push({ t: `${NNBSP}-${sum[1]}`, c: GIT_HEX.del, right: true })
         const below = isDir ? dirCounts(git, entry.path) : null
-        if (below) {
-          if (below.changed) segs.push({ t: `${NBSP}M:${below.changed}`, c: 'warning' })
-          if (below.added) segs.push({ t: `${NBSP}?:${below.added}`, c: 'success' })
-          if (below.deleted) segs.push({ t: `${NBSP}D:${below.deleted}`, c: 'error' })
-        } else if (code && code !== 'M') segs.push({ t: `${NBSP}${code}`, dim: true })
+        const tint = statusColor(code) ? { c: statusColor(code)! } : {}
+        if (below) segs.push(...countSegs(below))
+        else if (code) segs.push({ t: `${NNBSP}${gitLetter(code)}`, ...tint, right: true })
+        else if (!isDir && entry.at) segs.push({ t: `${NNBSP}${stampOf(entry.at)}`, c: GIT_HEX.muted, right: true, opt: true })
         if (Client) {
           rowPresses.set(key, press)
           // As wide as the pane, so the row knows its room and fits itself (it never wraps).
-          return <Client key={key} module="./row.tsx" width="100%" props={{ segs } satisfies RowProps} />
+          // Monospace, as filetree's terminal rows are: the dates and badges line up in a column.
+          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, ...(isSelected ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />
         }
         // Surfaces without a Client: a plain Button, which may not paint the colours.
         return (

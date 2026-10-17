@@ -49,7 +49,8 @@ export type HistoryView = {
 export type Hint = { turn: string; edits: number; files: number }
 
 /** One row of a directory listing. `path` is absolute, forward slashes, as the disk spells it. */
-export type Entry = { name: string; path: string; kind: 'dir' | 'file' }
+/** `at`: a file's last change (ms since the epoch), as the listing gave it. */
+export type Entry = { name: string; path: string; kind: 'dir' | 'file'; at?: number }
 
 export type Branch = { head: string; upstream: string; ahead: number; behind: number }
 
@@ -67,7 +68,8 @@ export type GitInfo = {
 }
 
 /** The Files tab: open folders (lower-cased paths), the selected path, and the search box's text ('' or absent: the tree). */
-export type FilesView = { expanded: string[]; selected: string | null; query?: string }
+/** `gitOpen`: the git bar shows every kept action, not only the latest. */
+export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean }
 
 /** Every file of the project, relative to its root, for the search box; `complete` false when the list was cut short. */
 export type SearchIndex = { files: string[]; complete: boolean }

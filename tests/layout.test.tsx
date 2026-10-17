@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Step, Turn } from '../types'
 import { diffLineText, layoutFor } from '../hooks/history-view'
-import { clip, keepIndent, NBSP, splitPath } from '../hooks/paths'
+import { clip, keepIndent, NBSP, splitPath, stampOf } from '../hooks/paths'
 import { KEY, PANE, START, hasText, plain, rowText, world, pressRow } from './world'
 
 const AT = new Date(2026, 9, 17, 17, 5).getTime()
@@ -13,6 +13,10 @@ const step = (id: string, rel: string, over: Partial<Step> = {}): Step => ({
 const T1: Turn = { id: 't1', at: AT - 3_600_000, prompt: 'add greet', steps: [step('a', 'src/lib/a.ts')] }
 const T2: Turn = { id: 't2', at: AT, prompt: 'rename greet to welcome everywhere in the project', steps: [step('b', 'src/b.ts'), step('c', 'README.md')] }
 const at = (columns: number) => ({ ...PANE, props: { ...PANE.props, bodyColumns: columns } })
+
+test('stampOf writes a file time as filetree does', () => {
+  expect(stampOf(new Date(2026, 9, 2, 9, 4).getTime())).toBe('2026-10-02 09:04')
+})
 
 test('splitPath, clip and layoutFor', () => {
   expect(splitPath('trail-demo/deep/notes.md')).toEqual({ name: 'notes.md', dir: 'trail-demo/deep' })

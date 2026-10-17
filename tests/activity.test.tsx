@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Turn } from '../types'
 import { FLASH_MS, foldersTo, targetOf } from '../hooks/activity'
-import { READ_COLOR, TONE_COLOR, TONE_SHIMMER } from '../hooks/files-view'
+import { READ_COLOR, SELECTED_BG, TONE_COLOR, TONE_SHIMMER } from '../hooks/files-view'
 import { shimmer, TICK_MS } from '../hooks/row'
 import { KEY, PANE, START, pressRow, rowRuns, rowText, world } from './world'
 
@@ -94,7 +94,7 @@ test('a Read lights its row and opens the tree down to it, then fades', async ($
 
   expect(await rowText(ui, rowKey(X))).toMatch(/x\.ts · reading$/)
   expect((await rowRuns(ui, rowKey(X))).find(r => r.text === 'x.ts')?.props.color).toBe(READ_COLOR)
-  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▾ src\//)
+  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▾ ■ src\//)
 
   // Still lit well past the old 2 s, then a quiet ◂ stays on the last file touched.
   await clock.advance(FLASH_MS - 1000)
@@ -135,7 +135,7 @@ test('a search lights a folder on show without opening it', async ($, on) => {
   await $.tool.call({ tool: 'Grep', pattern: 'greet', path: 'C:\\work\\demo\\src' })
   await clock.settle()
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
-  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ src\/ · reading$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ ■ src\/ · reading$/)
   expect(scrolls).toEqual([])
   await ui.unmount()
 })
@@ -168,7 +168,9 @@ test('Files to History and back: a file\'s history, then Show in Files', async (
   await ui.press({ key: 'reveal' })
   await clock.settle()
   expect(await ui.find({ key: rowKey('C:/work/demo/src/a.ts') })).toBeDefined()
+  // Selected: bold, and its row filled.
   const name = (await rowRuns(ui, rowKey('C:/work/demo/src/a.ts'))).find(r => r.text === 'a.ts')
-  expect(name?.props.underline).toBe(true)
+  expect(name?.props.bold).toBe(true)
+  expect(((await ui.find({ key: rowKey('C:/work/demo/src/a.ts') }))?.props as any)?.props?.bg).toBe(SELECTED_BG)
   await ui.unmount()
 })

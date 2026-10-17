@@ -12,14 +12,18 @@ import type { ClientModule } from 'claude-code'
  * One run of text: its colour (a theme key or hex), bold, underline, dim, monospace.
  * `sh`, a palette from base to brightest, sweeps a bright band across the run
  * letter by letter while it is drawn; `c` is its colour where a surface draws no band.
+ * `right` runs sit at the row's right edge (counts, a git letter), after a spacer.
+ * `name` marks the run cut first when the row is too long (the second run if none is);
+ * `opt` runs (a file's time) give way before anything else.
  */
-export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[] }
+export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean }
 /**
  * `wrap` lets the runs flow onto further lines (a turn's title) instead of fitting
- * one line (a tree row). `hoverAt` is the run underlined under the pointer: 1, the
- * name, unless said.
+ * one line (a tree row). `hoverAt` is the run underlined under the pointer: the
+ * name, unless said. `bg` fills the row (the selected one). `mono` sets every run in
+ * the monospace face, so columns line up from row to row.
  */
-export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number }
+export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number; bg?: string; mono?: boolean }
 /** What a row posts when pressed. */
 export type RowPost = { press: true }
 
@@ -48,22 +52,27 @@ function clipName(s: Seg, room: number): Seg {
   return { ...s, t: chars.slice(0, Math.max(1, room - 1)).join('') + '…' }
 }
 
+/** Where a row's name is: the run marked `name`, else the second. */
+export const nameAt = (segs: readonly Seg[]) => Math.max(1, segs.findIndex(s => s.name))
+
 /**
- * Fits a row into `columns` cells, since a row never wraps: the name (the second run)
- * is cut first, down to MIN_NAME, then the trailing counts and git letter give way
- * from the end, then the name is cut further. The indent and the tone word or
- * marker (the third run, when lit) always stay. 0 columns (not laid out yet) fits all.
+ * Fits a row into `columns` cells, since a row never wraps: `opt` runs go first, then
+ * the name is cut, down to MIN_NAME, then the trailing counts and git letter give way
+ * from the end, then the name is cut further. What comes before the name and the tone
+ * word right after it (when lit) always stay. 0 columns (not laid out yet) fits all.
  */
 export function fitRow(segs: readonly Seg[], columns: number): Seg[] {
   const total = (xs: readonly Seg[]) => xs.reduce((n, s) => n + width(s), 0)
   if (columns <= 0 || total(segs) <= columns || segs.length < 2) return [...segs]
-  const kept = segs.length > 2 && segs[2]!.sh ? 3 : 2
-  let out = [...segs]
+  const out = segs.filter(s => !s.opt)
+  if (total(out) <= columns) return out
+  const at = nameAt(out)
+  const kept = out.length > at + 1 && out[at + 1]!.sh ? at + 2 : at + 1
   const cut = (floor: number) => {
-    const others = total(out) - width(out[1]!)
-    out[1] = clipName(out[1]!, Math.max(floor, columns - others))
+    const others = total(out) - width(out[at]!)
+    out[at] = clipName(out[at]!, Math.max(floor, columns - others))
   }
-  cut(Math.min(MIN_NAME, width(segs[1]!)))
+  cut(Math.min(MIN_NAME, width(out[at]!)))
   while (total(out) > columns && out.length > kept) out.pop()
   if (total(out) > columns) cut(2)
   return out
@@ -96,22 +105,37 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
   })
   // Once a click gave it the focus, Enter presses it again, as on a Button.
   surface.onKey(e => { if (e.key === 'return') surface.post({ press: true } satisfies RowPost) })
-  const hoverAt = props.hoverAt ?? 1
-  const runs = (props.wrap ? props.segs : fitRow(props.segs, surface.columns)).map((s, i) => {
+  const hoverAt = props.hoverAt ?? nameAt(props.segs)
+  const fitted = props.wrap ? props.segs : fitRow(props.segs, surface.columns)
+  const runs = fitted.map((s, i) => {
     const style = {
       ...(s.c ? { color: s.c } : {}),
       ...(s.b ? { bold: true } : {}),
       ...(s.u || (hover && i === hoverAt) ? { underline: true } : {}),
       ...(s.dim ? { dimColor: true } : {}),
-      ...(s.mono ? { mono: true } : {}),
+      ...(s.mono || props.mono ? { mono: true } : {}),
+      // A row never wraps: a run too long for its room is cut (seen live: a monospace name and
+      // its counts each broke onto a second line).
+      ...(props.wrap ? {} : { wrap: 'truncate-end' as const }),
     }
     if (!s.sh?.length) return <Text {...style}>{s.t}</Text>
     const chars = [...s.t]
     const palette = s.sh
     return <Text {...style}>{chars.map((ch, k) => <Text color={shimmer(k, phase, chars.length, palette)}>{ch}</Text>)}</Text>
   })
-  // Wrapping runs sit in one Text, so they flow as one paragraph; a row's sit side by side.
-  return props.wrap ? <Text wrap="wrap">{runs}</Text> : <Box flexDirection="row">{runs}</Box>
+  // Wrapping runs sit in one Text, so they flow as one paragraph; a row's sit side by side,
+  // the right-hand ones pushed to the edge by a spacer.
+  if (props.wrap) return <Text wrap="wrap">{runs}</Text>
+  const left = runs.filter((_, i) => !fitted[i]!.right)
+  const right = runs.filter((_, i) => fitted[i]!.right)
+  return (
+    <Box flexDirection="row" {...(props.bg ? { backgroundColor: props.bg } : {})}>
+      {/* As filetree lays a row out: the left side gives way (clipped), the badges keep their width. */}
+      <Box flexDirection="row" flexShrink={1} overflow="hidden">{left}</Box>
+      {right.length ? <Box flexGrow={1} /> : null}
+      {right.length ? <Box flexDirection="row" flexShrink={0}>{right}</Box> : null}
+    </Box>
+  )
 }
 
 export default Row

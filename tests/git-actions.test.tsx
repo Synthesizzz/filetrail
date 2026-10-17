@@ -93,13 +93,25 @@ test('the git bar shows each action as it came out, the last three kept, until n
   await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
   expect(await bar(ui)).toEqual(['✓ pushed origin main'])
 
+  expect(await ui.find({ key: 'git-more' })).toBeUndefined()
+
+  // At rest the bar is one line: the latest action, and how many more are kept.
   await $.tool.call({ tool: 'Bash', command: 'git pull --fail' })
-  expect(await bar(ui)).toEqual(['✓ pushed origin main', '✗ pull failed'])
+  expect(await bar(ui)).toEqual(['✗ pull failed'])
+  expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('1 more')
 
   await $.tool.call({ tool: 'Bash', command: 'git checkout -b topic && git stash' })
+  expect(await bar(ui)).toEqual(['✓ stashed'])
+  expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('2 more')
+
+  // "2 more" shows all kept, oldest first; "fewer" folds them again.
+  await ui.press({ key: 'git-more' })
   const rows = await bar(ui)
   expect(rows.length).toBe(MAX_ACTIONS)
   expect(rows).toEqual(['✗ pull failed', '✓ checked out topic', '✓ stashed'])
+  expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('fewer')
+  await ui.press({ key: 'git-more' })
+  expect(await bar(ui)).toEqual(['✓ stashed'])
   await clock.advance(1000)
   await ui.unmount()
 })

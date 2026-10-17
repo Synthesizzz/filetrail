@@ -590,6 +590,7 @@ export const register: Register = on => {
                 }),
                 open: path => fire($, 'opening the file', () => openFile($, path)),
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
+                toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
                 openHit: rel => fire($, 'opening a search result', async () => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
