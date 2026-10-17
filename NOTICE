@@ -1,0 +1,17 @@
+filetrail
+Copyright (c) 2026 Synthesizzz
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+hooks/diff.ts is adapted from Replay Theater, a mod in claude-code-playground:
+
+  Replay Theater, Copyright 2026 Anthropic PBC. Apache License 2.0.
+  https://github.com/anthropics/claude-code-playground
+
+The line diff (an LCS table with a fallback for long inputs) and the context
+trimming come from it. filetrail types them for TypeScript, makes the context
+width a parameter and adds a cap on the lines kept.
+
+The rest of filetrail is written from scratch. Its file tree was inspired by
+the feature set of claude-code-filetree by Kurt Buhler (MIT), but contains none
+of its code.

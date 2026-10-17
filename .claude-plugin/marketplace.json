@@ -1,0 +1,13 @@
+{
+  "name": "filetrail-mods",
+  "description": "Mods for Claude Code by Synthesizzz: filetrail shows a file tree and the history of Claude's edits in one pane.",
+  "owner": {
+    "name": "Synthesizzz"
+  },
+  "plugins": [
+    {
+      "name": "filetrail",
+      "source": "./"
+    }
+  ]
+}

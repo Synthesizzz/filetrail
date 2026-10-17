@@ -1,0 +1,11 @@
+{
+  "name": "filetrail",
+  "version": "0.1.0",
+  "description": "A file tree and a history of Claude's edits in one pane, with Files and History tabs",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Synthesizzz"
+  },
+  "keywords": ["file-tree", "history", "git", "pane", "mod"],
+  "license": "Apache-2.0"
+}
