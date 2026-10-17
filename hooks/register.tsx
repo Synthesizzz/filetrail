@@ -3,8 +3,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitInfo, Hint, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, Turn } from '../types'
-import { FLASH_MS, foldersTo, targetOf } from './activity'
+import type { Entry, FilesView, GitActionEntry, GitInfo, Hint, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
+import { BROWSE_MS, FLASH_MS, GLIDE_MS, HOLD_MS, clampTop, foldersTo, glide, targetOf, topFor, treeLines, treeRows, treeWindow } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
 import { isCommit, readTargets } from './bash'
@@ -12,7 +12,7 @@ import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
-import { filesView } from './files-view'
+import { filesView, MAX_ROWS } from './files-view'
 import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
@@ -24,7 +24,7 @@ import {
 import type { EditCall, StoreIndex } from './history'
 import { historyView, TIMELINE } from './history-view'
 import { MAX_INDEX_FILES, parseLsFiles, SKIP_DIRS } from './search'
-import { joinPath, lower, parentOf, toEntries } from './tree'
+import { joinPath, lower, parentOf, toEntries, visibleRows } from './tree'
 
 export const PANE = 'filetrail'
 
@@ -41,6 +41,9 @@ const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | 
 const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as SearchIndex | null)
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
 const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as Preview | null)
+const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as TouchedFile[])
+/** Files the Claude touched list keeps. */
+const MAX_TOUCHED = 8
 // One build at a time: typing fast must not start a listing per key.
 let indexing: Promise<void> | null = null
 
@@ -118,9 +121,6 @@ async function copyPath($: EngineInterface, path: string, full: boolean, surface
 }
 const flashTimers = new Map<string, { cancel: () => void }>()
 
-const rowKey = (path: string) => `row-${lower(path)}`
-const SCROLL_WAIT_MS = 120
-
 /** Runs a button's work without awaiting it; a failure goes to the transcript, never unhandled. */
 function fire($: EngineInterface, what: string, work: () => Promise<unknown>) {
   void work().catch(err => {
@@ -129,46 +129,126 @@ function fire($: EngineInterface, what: string, work: () => Promise<unknown>) {
 }
 
 /**
+ * Folders the person opened or closed lately, with when: the follow leaves them, and
+ * the folders above them, as they are for BROWSE_MS. Every other open folder that does
+ * not lead to Claude's file folds, so the tree shows where Claude is and not every
+ * folder it or the person passed through.
+ */
+const browsed = new Map<string, number>()
+
+/**
  * Opens the folders down to `path` (listing those not listed yet) and scrolls
  * the tree to its row; `select` also selects it. Paths outside the root are left alone.
+ * `follow` (Claude touched it): open folders that do not lead to `path` fold, but for
+ * those the person browsed lately; asked by the person, the folders opened count as browsed.
  */
-async function reveal($: EngineInterface, path: string, select: boolean) {
+async function reveal($: EngineInterface, path: string, select: boolean, follow = false) {
   const dirs = foldersTo(root, path)
   if (!dirs) return
   const listed = await read($, listing)
   for (const d of dirs) if (!(lower(d) in listed)) await listDir($, d)
-  await update($, files, f => ({
-    expanded: [...new Set([...f.expanded, ...dirs.map(lower)])],
-    selected: select ? path : f.selected,
-  }))
-  // The row is drawn on the next redraw after its folders open, so the scroll waits on a
-  // timer: a timer outlives the hook that set it, where awaited work would hold the call.
-  // Refused while the row is not drawn (another tab on show): the reason goes to the debug log.
-  $.clock.after(SCROLL_WAIT_MS, () => {
-    void $.ui.scroll({ to: { key: rowKey(path) }, in: PANE })
-      .catch((err: unknown) => ({ deny: String(err) }))
-      .then(moved => { if ('deny' in moved) $.ui.log(`filetrail: did not scroll to ${path}: ${moved.deny}`, { to: 'debug' }) })
-      .catch(() => undefined)
+  const want = dirs.map(lower)
+  const open = new Set((await read($, files)).expanded)
+  const now = await $.clock.now()
+  if (follow) {
+    const keep = new Set(want)
+    for (const [d, at] of [...browsed]) {
+      if (now - at > BROWSE_MS) { browsed.delete(d); continue }
+      keep.add(d)
+      for (const o of open) if (d.startsWith(o + '/')) keep.add(o)
+    }
+    for (const d of [...open]) if (!keep.has(d)) open.delete(d)
+  } else for (const d of want) browsed.set(d, now)
+  for (const d of want) open.add(d)
+  await update($, files, f => ({ ...f, expanded: [...open], selected: select ? path : f.selected }))
+  // The tree glides to the row under the fixed head: no pane scroll, so the card stays.
+  await glideTo($, lower(path))
+}
+
+/**
+ * The pane's fixed head and the tree under it. The head's height is measured, not known
+ * (the card's rows and the crab's pixels vary): each ui.scroll says how many rows the
+ * whole pane drew, less the tree's lines drawn then. A first guess on the small side
+ * draws the tree too long, so the first measure comes soon.
+ */
+const HEAD_GUESS = 4
+const pane = { headRows: HEAD_GUESS, fit: 0, treeLines: 0, windowAt: 0 }
+
+/**
+ * Asks the pane to move to its end once its redraws settle: the ui.scroll that comes
+ * measures the head (and the hook keeps the window where it is). A pane whose content
+ * fits raises none, nothing then being off screen.
+ */
+let measuring: { cancel: () => void } | null = null
+function scheduleMeasure($: EngineInterface) {
+  measuring?.cancel()
+  measuring = $.clock.after(MEASURE_MS, () => {
+    measuring = null
+    void $.ui.scroll({ to: 'end', in: PANE }).catch(() => undefined)
+  })
+}
+const MEASURE_MS = 400
+
+/** Counts glides, so a newer one stops an older one mid-way. */
+let gliding = 0
+
+/** Moves the tree's first row, in a few steps, so `path` shows; it moves only when it is out of view. */
+async function glideTo($: EngineInterface, path: string) {
+  const f = await read($, files)
+  const rows = visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).slice(0, MAX_ROWS)
+  const at = rows.findIndex(r => lower(r.entry.path) === path)
+  if (at < 0 || !pane.fit) return
+  const from = f.top ?? 0
+  // Two rows of the window may be the above and below lines.
+  const to = topFor(at, rows.length, Math.max(1, pane.fit - 2), from)
+  const steps = glide(from, to)
+  const mine = ++gliding
+  steps.forEach((top, k) => {
+    $.clock.after(GLIDE_MS * k, () => {
+      if (mine !== gliding) return
+      void update($, files, x => ({ ...x, top })).catch(() => undefined)
+    })
   })
 }
 
 /**
- * Lights the row Claude touched for a moment and, for one file, opens the tree to it.
+ * Lights the row Claude touched and, for one file, opens the tree to it: a file Claude
+ * reads or edits stays lit while it is on it, a searched folder or a commit for FLASH_MS.
  * Awaited by the tool.call hook: work a hook leaves running when it returns can be cut off
  * with its dispatch (seen live: the flash never showed, and no failure line either).
  * The fade and the scroll run on timers, which outlive the dispatch.
  */
 async function touch($: EngineInterface, target: Target) {
   const k = lower(target.path)
+  // One file is Claude's at a time: the one it leaves goes out as this one lights.
+  if (target.follow) {
+    if (onFile && onFile !== k) await unlight($, onFile)
+    onFile = k
+  }
   await update($, flash, f => ({ ...f, [k]: target.tone }))
   await update($, last, () => ({ path: k, tone: target.tone }))
+  // A file read, written or committed joins the Claude touched list (a searched folder does not).
+  if (target.follow || target.tone === 'commit') {
+    const at = await $.clock.now()
+    await update($, touched, list => [{ path: normPath(target.path), tone: target.tone, at }, ...list.filter(f => lower(f.path) !== k)].slice(0, MAX_TOUCHED))
+  }
   flashTimers.get(k)?.cancel()
-  flashTimers.set(k, $.clock.after(FLASH_MS, () => {
-    flashTimers.delete(k)
+  flashTimers.set(k, $.clock.after(target.follow ? HOLD_MS : FLASH_MS, () => {
     // The module may be unloading when this fires; nothing to clean up then.
-    void update($, flash, f => Object.fromEntries(Object.entries(f).filter(([p]) => p !== k))).catch(() => undefined)
+    void unlight($, k).catch(() => undefined)
   }))
-  if (target.follow) await reveal($, target.path, false)
+  if (target.follow) await reveal($, target.path, false, true)
+}
+
+/** The file Claude is on (lower-cased), lit until it moves on or the turn ends. */
+let onFile: string | null = null
+
+/** Puts out one row's light and its fade timer. */
+async function unlight($: EngineInterface, k: string) {
+  flashTimers.get(k)?.cancel()
+  flashTimers.delete(k)
+  if (onFile === k) onFile = null
+  await update($, flash, f => Object.fromEntries(Object.entries(f).filter(([p]) => p !== k)))
 }
 
 /** Paths of one Bash command lit at most: a wide `cat a b c …` should not light the whole tree. */
@@ -482,6 +562,8 @@ export const register: Register = on => {
     }
     // Saved now (or it changed nothing): the timeline's Now row gives way to the saved turn.
     await update($, live, () => null)
+    // The turn is over: the file Claude was on goes out (its ◂ stays).
+    if (onFile) await unlight($, onFile).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     // Bash may have changed files too: list the open folders and read git again.
     await relist($)
     // Files may have come or gone: a search already in use gets a fresh list.
@@ -498,6 +580,8 @@ export const register: Register = on => {
   // Slash commands and hidden prompts are passed as they are.
   on('prompt.submit', async ($, e, next) => {
     if (e.command || e.isMeta) return next(e)
+    // The replay offer was about the turn just read: the next prompt takes it down.
+    if (await read($, hint)) await update($, hint, () => null)
     for (const mention of mentionedPaths(e.text)) {
       const path = resolveMention(root, mention)
       if (isInside(root, path) && (await $.fs.exists(path))) {
@@ -584,8 +668,42 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // The tree scrolls under a fixed head: in the Files tab's tree, the person's wheel moves
+  // the tree's first row and the pane's window stays at the top, so the card stays on
+  // screen. A move the pane needs to get back to the top goes through. Elsewhere (History,
+  // a preview, search results) the pane scrolls as the engine moves it.
+  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
+    const f = await read($, files)
+    if ((await read($, tab)) !== 'files' || (f.query ?? '').trim() || (await read($, preview))) return next(e)
+    // Measure the head: all the pane drew, less the tree's lines.
+    const head = e.contentRows - pane.treeLines
+    if (head > 0 && head !== pane.headRows) {
+      pane.headRows = head
+      $.ui.invalidate('ui.render')
+    }
+    if (pane.windowAt > 0) return next({ ...e, offset: 0 })
+    // A plugin's move to the top goes through; the measuring move to the end stays put.
+    if (e.origin.kind !== 'person') return e.offset === 0 ? next(e) : {}
+    const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
+    const top = clampTop((f.top ?? 0) + e.by, count, Math.max(1, pane.fit - 1))
+    // The person takes over from a glide still under way.
+    gliding++
+    if (top !== (f.top ?? 0)) await update($, files, x => ({ ...x, top }))
+    return {}
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
+    // Where the pane's window stands, the tree's room under the head, and the lines it
+    // will draw: what the ui.scroll hook measures the head against.
+    pane.windowAt = e.props.scroll.offset
+    pane.fit = treeRows(e.props.scroll.bodyRows, pane.headRows)
+    {
+      const f = await read($, files)
+      const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
+      pane.treeLines = count ? treeLines(treeWindow(count, f.top ?? 0, pane.fit)) : 1
+      if ((await read($, tab)) === 'files' && !(f.query ?? '').trim() && !(await read($, preview))) scheduleMeasure($)
+    }
     clearRows()
     const { Box, Text, Button } = els
     const current = await read($, tab)
@@ -608,6 +726,9 @@ export const register: Register = on => {
             ? filesView(els, root, await read($, listing), await read($, files), await read($, git), turnsAll, await read($, flash), await read($, last), {
                 toggle: dir => fire($, 'opening a folder', async () => {
                   const k = lower(dir.path)
+                  // Opened or closed by the person: the follow leaves it, and the folders above
+                  // it, as they are for a while (they may be browsing it).
+                  browsed.set(k, await $.clock.now())
                   const isOpen = (await read($, files)).expanded.includes(k)
                   await update($, files, f => ({ ...f, expanded: isOpen ? f.expanded.filter(d => d !== k) : [...f.expanded, k] }))
                   if (!isOpen && !(k in (await read($, listing)))) await listDir($, dir.path)
@@ -625,14 +746,19 @@ export const register: Register = on => {
                 open: path => fire($, 'opening the file', () => openFile($, path)),
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
+                toggleTouched: () => fire($, 'listing the touched files', () => update($, files, f => ({ ...f, touchedOpen: !f.touchedOpen }))),
                 refresh: () => fire($, 'refreshing', async () => {
                   await relist($)
                   await refreshGit($)
                   if (await read($, index)) await ensureIndex($)
                 }),
                 toggleDots: () => fire($, 'showing dotfiles', () => update($, files, f => ({ ...f, hideDots: !f.hideDots }))),
-                collapseAll: () => fire($, 'closing the folders', () => update($, files, f => ({ ...f, expanded: [] }))),
+                collapseAll: () => fire($, 'closing the folders', async () => {
+                  browsed.clear()
+                  await update($, files, f => ({ ...f, expanded: [], top: 0 }))
+                }),
                 preview: path => fire($, 'showing the file', () => loadPreview($, path, 0)),
+                reveal: path => fire($, 'going to the file', () => reveal($, path, true)),
                 previewing: {
                   back: () => fire($, 'going back to the tree', () => update($, preview, () => null)),
                   open: path => fire($, 'opening the file', () => openFile($, path)),
@@ -649,7 +775,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), pane.fit)
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

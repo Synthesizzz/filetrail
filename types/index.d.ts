@@ -68,8 +68,12 @@ export type GitInfo = {
 }
 
 /** The Files tab: open folders (lower-cased paths), the selected path, and the search box's text ('' or absent: the tree). */
-/** `gitOpen`: the git bar shows every kept action, not only the latest. `hideDots`: dotfiles left out of the tree. */
-export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean }
+/**
+ * `gitOpen`: the git bar shows every kept action, not only the latest. `hideDots`: dotfiles left out of the tree.
+ * `touchedOpen`: the card lists every touched file, not only the latest few.
+ * `top`: the first tree row on show, the tree scrolling under the pane's fixed head.
+ */
+export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean; touchedOpen?: boolean; top?: number }
 
 /** Every file of the project, relative to its root, for the search box; `complete` false when the list was cut short. */
 export type SearchIndex = { files: string[]; complete: boolean }
@@ -82,6 +86,9 @@ export type Tone = 'read' | 'write' | 'commit'
  * the file's line count once read, or why it is not shown.
  */
 export type Preview = { path: string; page: number; source?: string; total?: number; reason?: 'binary' | 'large' | 'missing' }
+
+/** A file Claude read, edited or committed this session, for the Claude touched list: its path as spelled, how, and when. */
+export type TouchedFile = { path: string; tone: Tone; at: number }
 
 /** What a git action does, which picks its colour in the bar. */
 export type GitActionKind = 'save' | 'sync' | 'fetch' | 'branch' | 'merge' | 'stash'
@@ -126,6 +133,8 @@ declare module 'claude-code' {
       actions: GitActionEntry[]
       /** The file shown in place of the tree, or null for the tree. */
       preview: Preview | null
+      /** The files Claude touched this session, newest first, eight at most. */
+      touched: TouchedFile[]
     }
   }
 }

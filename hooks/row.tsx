@@ -14,9 +14,9 @@ import type { ClientModule } from 'claude-code'
  * letter by letter while it is drawn; `c` is its colour where a surface draws no band.
  * `right` runs sit at the row's right edge (counts, a git letter), after a spacer.
  * `name` marks the run cut first when the row is too long (the second run if none is);
- * `opt` runs (a file's time) give way before anything else.
+ * `opt` runs (a file's time) give way before anything else. `bg` fills the run (a pill, a badge).
  */
-export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean }
+export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean; bg?: string }
 /**
  * `wrap` lets the runs flow onto further lines (a turn's title) instead of fitting
  * one line (a tree row). `hoverAt` is the run underlined under the pointer: the
@@ -33,12 +33,17 @@ export const DOUBLE_MS = 450
 /** `ref` is mutable on purpose: the running timer is not a value to redraw on. */
 type Local = { hover: boolean; phase: number; ref: { stop?: () => void; lastDown?: number } }
 
-/** How often the band moves one step. */
-export const TICK_MS = 90
+/**
+ * How often the band moves one step, and how far a step goes in letters. A 90 ms tick of
+ * 1.6 letters read as a stutter once a file stayed lit while Claude works on it, and 45 ms
+ * of 0.8 as too fast (both seen live): 45 ms of 0.5, about 11 letters a second.
+ */
+export const TICK_MS = 45
+export const BAND_STEP = 0.5
 
 /** The colour of letter `i` of `len` while the band is at `phase`: brightest under it, base far from it. */
 export function shimmer(i: number, phase: number, len: number, palette: readonly string[]): string {
-  const band = ((phase * 1.6) % (len + 8)) - 4
+  const band = ((phase * BAND_STEP) % (len + 8)) - 4
   const d = Math.abs(i - band)
   const step = d < 0.8 ? 3 : d < 1.8 ? 2 : d < 2.8 ? 1 : 0
   return palette[Math.min(step, palette.length - 1)] ?? palette[0] ?? ''
@@ -125,6 +130,7 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
   const runs = fitted.map((s, i) => {
     const style = {
       ...(s.c ? { color: s.c } : {}),
+      ...(s.bg ? { backgroundColor: s.bg } : {}),
       ...(s.b ? { bold: true } : {}),
       ...(s.u || (hover && i === hoverAt) ? { underline: true } : {}),
       ...(s.dim ? { dimColor: true } : {}),

@@ -3,14 +3,16 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitActionKind, GitInfo, Preview, SearchIndex, Tone, Turn } from '../types'
+import type { Entry, FilesView, GitActionEntry, GitActionKind, GitInfo, Preview, SearchIndex, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
+import { treeWindow } from './activity'
 import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import type { Tool, ToolsProps } from './tools'
+import { NOW_STYLE, nowCard } from './now-card'
 import { previewView } from './preview'
 import type { PreviewActions } from './preview'
 import { findFiles } from './search'
@@ -37,6 +39,8 @@ export type FilesActions = {
   copy: (path: string, full: boolean, surface: string) => void
   /** Shows every kept git action in the bar, or only the latest again. */
   toggleGitLog: () => void
+  /** Lists every touched file in the card, or only the latest few again. */
+  toggleTouched: () => void
   /** Lists the open folders again, reads git again and rebuilds the search's file list. */
   refresh: () => void
   /** Leaves dotfiles out of the tree, or shows them again. */
@@ -47,6 +51,8 @@ export type FilesActions = {
   goToSelected: () => void
   /** Shows a file in the pane in place of the tree. */
   preview: (path: string) => void
+  /** Opens the tree down to a file, selects it and scrolls to it. */
+  reveal: (path: string) => void
   /** What the preview's buttons do. */
   previewing: PreviewActions
 }
@@ -126,34 +132,63 @@ export function gitActionSegs(a: GitActionEntry): Seg[] {
   return [{ t: `✗${NBSP}`, c: 'error' }, { t: `${a.verb} failed`, c: 'error' }, ...target]
 }
 
+/** A chip's fill: a faint grey that reads on light and dark backgrounds alike. */
+export const CHIP_BG = '#80808026'
+
 /**
- * The git bar: the latest git action Claude ran, with "N more" to show the others
- * kept (oldest first) and "fewer" to fold them again, so it takes one line at rest.
+ * The branch and git as chips in the card's title bar: the branch with commits ahead
+ * and behind, the repo's changes (or "clean"), and the latest git action Claude ran
+ * (shimmering while it runs), with "N more" to list the others under the chips.
  */
-function gitBar(els: Els, log: readonly GitActionEntry[], open: boolean, actions: FilesActions) {
+function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry[], open: boolean, actions: FilesActions) {
   const { Box, Text, Button } = els
   const Client = 'Client' in els ? els.Client : undefined
-  if (!log.length) return null
-  const shownLog = open ? log : log.slice(-1)
+  const chip = (key: string, runs: { t: string; c?: string; b?: boolean; dim?: boolean }[]) => (
+    <Text key={key} backgroundColor={CHIP_BG}>
+      {[{ t: NBSP }, ...runs, { t: NBSP }].map(r => <Text {...(r.c ? { color: r.c } : {})} {...(r.b ? { bold: true } : {})} {...(r.dim ? { dimColor: true } : {})}>{r.t}</Text>)}
+    </Text>
+  )
+  const b = git?.branch
+  const branch = !git
+    ? chip('chip-branch', [{ t: 'not a git repo', dim: true }])
+    : chip('chip-branch', [
+      { t: b ? b.head : 'git', c: 'claude', b: true },
+      ...(b?.ahead ? [{ t: ` ↑${b.ahead}`, dim: true }] : []),
+      ...(b?.behind ? [{ t: ` ↓${b.behind}`, dim: true }] : []),
+    ])
+  const sum = repoSummary(git)
+  const changes = sum
+    ? [
+      ...(sum.lines?.[0] ? [{ t: `+${sum.lines[0]}`, c: GIT_HEX.add }] : []),
+      ...(sum.lines?.[1] ? [{ t: `-${sum.lines[1]}`, c: GIT_HEX.del }] : []),
+      ...countSegs(sum.counts).map(s => ({ t: s.t.replace(NNBSP, ''), c: s.c! })),
+    ]
+    : []
+  const repoChip = !sum ? null
+    : changes.length
+      ? chip('chip-changes', changes.flatMap((r, k) => (k ? [{ t: ' ' }, r] : [r])))
+      : chip('chip-changes', [{ t: 'clean', dim: true }])
+  // A finished git action is a plain chip. One running is a Client on a line of its own, as
+  // wide as the card, for the shimmer: a Client sized by what it draws was refused for
+  // changing its own size as it shimmered (seen live).
+  const runs = (a: GitActionEntry) => gitActionSegs(a).map(s => ({ t: s.t, ...(s.c ? { c: s.c } : {}), ...(s.b ? { b: true } : {}), ...(s.dim ? { dim: true } : {}) }))
+  const line = (a: GitActionEntry) => Client
+    ? <Client key={`git-${a.id}`} module="./row.tsx" width="100%" props={{ segs: gitActionSegs(a), hoverAt: -1 } satisfies RowProps} />
+    : <Text key={`git-${a.id}`}>{runs(a).map(r => <Text {...(r.c ? { color: r.c } : {})} {...(r.dim ? { dimColor: true } : {})}>{r.t}</Text>)}</Text>
+  const latest = log.at(-1)
+  const running = latest?.state === 'running'
   const more = log.length - 1
-  const line = (a: GitActionEntry) => {
-    const segs = gitActionSegs(a)
-    // A Client for the shimmer while it runs; nothing to press (no entry in rowPresses).
-    return Client
-      ? <Client key={`git-${a.id}`} module="./row.tsx" flexGrow={1} props={{ segs, hoverAt: -1 } satisfies RowProps} />
-      : <Text key={`git-${a.id}`}>{segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.b ? { bold: true } : {})} {...(s.dim ? { dimColor: true } : {})}>{s.t}</Text>)}</Text>
-  }
-  const toggle = more > 0
-    ? <Button key="git-more" label={open ? 'fewer' : `${more} more`} plain dimColor onPress={() => actions.toggleGitLog()} />
-    : null
   return (
-    <Box key="git-bar" flexDirection="column">
-      {shownLog.map((a, k) => (
-        <Box key={`git-line-${a.id}`} flexDirection="row" gap={1}>
-          {line(a)}
-          {k === shownLog.length - 1 ? toggle : null}
-        </Box>
-      ))}
+    <Box key="branch-chips" flexDirection="column" gap="xs">
+      <Box key="chips" flexDirection="row" flexWrap="wrap" gap={1}>
+        {branch}
+        {repoChip}
+        {latest && !running ? chip(`git-${latest.id}`, runs(latest)) : null}
+        {more > 0 ? <Button key="git-more" label={open ? 'fewer' : `${more} more`} plain dimColor onPress={() => actions.toggleGitLog()} /> : null}
+      </Box>
+      {latest && running ? line(latest) : null}
+      {/* The older ones, oldest first, while "N more" is open. */}
+      {open ? log.slice(0, -1).map(line) : null}
     </Box>
   )
 }
@@ -179,16 +214,6 @@ function countSegs(n: DirCounts): Seg[] {
   return out
 }
 
-/** The whole repo's changes, for the branch line; "clean" when there are none. */
-function repoTotals(els: Els, git: GitInfo | null) {
-  const { Text } = els
-  const sum = repoSummary(git)
-  if (!sum) return null
-  const runs = [...(sum.lines?.[0] ? [{ t: `+${sum.lines[0]}`, c: GIT_HEX.add }] : []), ...(sum.lines?.[1] ? [{ t: `-${sum.lines[1]}`, c: GIT_HEX.del }] : []), ...countSegs(sum.counts).map(s => ({ t: s.t.replace(NNBSP, ''), c: s.c! }))]
-  if (!runs.length) return <Text key="repo-totals" dimColor>clean</Text>
-  return <Text key="repo-totals">{runs.map((r, k) => <Text color={r.c}>{(k ? ' ' : '') + r.t}</Text>)}</Text>
-}
-
 /**
  * filetree's softer git palette, easier on the eye than the theme's own success, warning
  * and error, in a tree where many names carry one: yellow changed, green new, blue renamed,
@@ -199,6 +224,61 @@ export const GIT_HEX = {
   add: '#98c379', del: '#e06c75', muted: '#808a96',
 } as const
 
+/** A file's kind as a short badge: its extension, upper-cased, three letters at most. */
+export function badgeOf(path: string): string {
+  const name = path.split('/').pop() ?? path
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1, dot + 4).toUpperCase() : 'TXT'
+}
+
+/**
+ * The files Claude touched this session, newest first, in the activity card under
+ * Right now: a kind badge, the name, its folder, and a pill saying how (filled while
+ * Claude is at it). A click goes to it in the tree, a double-click shows it, a
+ * right-click copies its path.
+ */
+/** Touched files shown before "+N more": the card stays short so the tree keeps the room. */
+export const TOUCHED_SHOWN = 3
+
+function touchedSection(els: Els, root: string, touched: readonly TouchedFile[], flash: Readonly<Record<string, Tone>>, open: boolean, actions: FilesActions) {
+  const { Box, Text, Button } = els
+  const more = touched.length - TOUCHED_SHOWN
+  const Client = 'Client' in els ? els.Client : undefined
+  if (!touched.length) return []
+  return [
+    <Box key="touched" flexDirection="column" gap="xs">
+      <Box key="touched-head" flexDirection="row" justifyContent="space-between">
+        <Text size="caption" weight="semibold" dimColor>{`TOUCHED · ${touched.length}`}</Text>
+        {more > 0 ? <Button key="touched-more" label={open ? 'fewer' : `+${more} more`} plain dimColor onPress={() => actions.toggleTouched()} /> : null}
+      </Box>
+      {(open ? touched : touched.slice(0, TOUCHED_SHOWN)).map(f => {
+        const key = `touched-${lower(f.path)}`
+        const { name, dir } = splitPath(relTo(root, f.path))
+        const now = flash[lower(f.path)]
+        const style = NOW_STYLE[now ?? f.tone]
+        const segs: Seg[] = [
+          { t: ` ${badgeOf(f.path)} `, c: GIT_HEX.changed, bg: '#e5c07b22', b: true },
+          { t: `${NNBSP}${name}`, name: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
+          // The folder gives way before the name when the row is short (seen live: "notes.…" beside a whole folder).
+          ...(dir ? [{ t: `${NNBSP}${dir}`, dim: true, opt: true }] : []),
+          now
+            ? { t: ` ${style.pill} `, c: style.color, bg: style.fill, b: true, right: true }
+            : { t: ` ${style.did[0]!.toUpperCase()}${style.did.slice(1)} `, c: style.color, right: true },
+        ]
+        if (Client) {
+          rowPresses.set(key, () => actions.reveal(f.path))
+          rowOpens.set(key, () => actions.preview(f.path))
+          rowCopies.set(key, (full, surface) => actions.copy(f.path, full, surface))
+          // Monospace, as the tree's rows: the row fits itself by counting cells (seen live: a
+          // proportional name was cut short with room to spare).
+          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true } satisfies RowProps} />
+        }
+        return <Text key={key}>{segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.dim ? { dimColor: true } : {})}>{s.t}</Text>)}</Text>
+      })}
+    </Box>,
+  ]
+}
+
 export function statusColor(code: string): string | undefined {
   if (code === 'M') return GIT_HEX.changed
   if (code === 'R') return GIT_HEX.renamed
@@ -207,19 +287,14 @@ export function statusColor(code: string): string | undefined {
   return undefined
 }
 
-export function branchText(git: GitInfo | null): string {
-  if (!git) return 'not a git repo'
-  if (!git.branch) return 'git'
-  const b = git.branch
-  // A word, not the ⎇ glyph: the desktop's font drew it as an unreadable mark (seen live).
-  return `branch ${b.head}${b.ahead ? ` ↑${b.ahead}` : ''}${b.behind ? ` ↓${b.behind}` : ''}`
-}
-
 export function filesView(
   els: Els, root: string, listing: Readonly<Record<string, Entry[]>>, files: FilesView,
   git: GitInfo | null, turns: readonly Turn[], flash: Readonly<Record<string, Tone>>,
   last: { path: string; tone: Tone } | null, actions: FilesActions, width = 60,
   searchIndex: SearchIndex | null = null, gitLog: readonly GitActionEntry[] = [], preview: Preview | null = null,
+  touched: readonly TouchedFile[] = [],
+  /** Tree rows the pane has room for under its head; null draws them all. */
+  fit: number | null = null,
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -231,6 +306,8 @@ export function filesView(
   const counts = editCounts(turns)
   const rows = visibleRows(root, listing, files.expanded, files.hideDots === true)
   const shown = rows.slice(0, MAX_ROWS)
+  // The tree scrolls under the head on its own first row (files.top), the head staying put.
+  const win = treeWindow(shown.length, files.top ?? 0, fit ?? shown.length)
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
   const tools: (Tool & { run: () => void })[] = [
@@ -248,28 +325,25 @@ export function filesView(
     // the terminal draws `xs` down as no line and `md` as one, as before.
     <Box key="files" flexDirection="column" gap="md">
       {/* As filetree heads its tree: the folder, then the branch and its upstream with the repo's changes at the right. */}
-      <Box key="files-head" flexDirection="column" gap="xs">
-        <Box key="name-line" flexDirection="row" gap={1}>
-          <Text bold color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
-          {/* filetree's header buttons, its plain Unicode glyphs. A Client draws them where it can, so
-              hovering one says what it does (a desktop Button has no tooltip); Buttons elsewhere. */}
-          {Client
-            ? <Client key="tree-tools" module="./tools.tsx" flexGrow={1} props={{ tools: tools.map(({ id, glyph, hint }) => ({ id, glyph, hint })) } satisfies ToolsProps} />
-            : (
-              <Box key="tree-tools" flexDirection="row" gap={1} flexGrow={1} justifyContent="flex-end">
-                {tools.map(t => <Button key={t.id} label={t.glyph} plain dimColor onPress={t.run} />)}
-              </Box>
-            )}
-        </Box>
-        <Box key="branch-line" flexDirection="row" gap={1}>
-          <Text dimColor={!git} wrap="truncate-end" {...(git?.branch ? { color: 'claude', bold: true } : {})}>{branchText(git)}</Text>
-          {git?.branch?.upstream ? <Text dimColor wrap="truncate-end">{git.branch.upstream}</Text> : null}
-          <Box flexGrow={1} />
-          {repoTotals(els, git)}
-        </Box>
-      </Box>
-      {/* Under the branch, not under the tree: the pane scrolls as one, so a footer below a long tree is out of sight. */}
-      {gitBar(els, gitLog, files.gitOpen === true, actions)}
+      {/* One card for the top of the pane: the folder, its toolbar, the branch and git as chips,
+          then what Claude is doing right now and the files it touched this session. */}
+      {nowCard(els, root, listing, last, flash, touchedSection(els, root, touched, flash, files.touchedOpen === true, actions), [
+          <Box key="name-line" flexDirection="row" gap={1} minWidth={0}>
+            <Box key="name-box" flexShrink={1} minWidth={0}>
+              <Text bold color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
+            </Box>
+            {/* filetree's header buttons, its plain Unicode glyphs. A Client draws them where it can, so
+                hovering one says what it does (a desktop Button has no tooltip); Buttons elsewhere. */}
+            {Client
+              ? <Client key="tree-tools" module="./tools.tsx" flexGrow={1} props={{ tools: tools.map(({ id, glyph, hint }) => ({ id, glyph, hint })) } satisfies ToolsProps} />
+              : (
+                <Box key="tree-tools" flexDirection="row" gap={1} flexGrow={1} justifyContent="flex-end">
+                  {tools.map(t => <Button key={t.id} label={t.glyph} plain dimColor onPress={t.run} />)}
+                </Box>
+              )}
+          </Box>,
+        branchChips(els, git, gitLog, files.gitOpen === true, actions),
+      ], width < NARROW_COLUMNS)}
       {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">
@@ -278,38 +352,30 @@ export function filesView(
           {searching && <Button key="search-clear" label="✕" plain dimColor onPress={() => actions.search('')} />}
         </Box>
       )}
-      {/* The selected file rides along with every prompt until ✕: say so plainly, since it changes what Claude reads. */}
-      {files.selected !== null && (
-        <Box key="selected" flexDirection="column" gap="xs">
-          <Box key="selected-name" flexDirection="row" flexWrap="wrap" gap={1}>
-            <Text color="claude">Claude sees:</Text>
-            {width < NARROW_COLUMNS
-              ? <Text bold>{splitPath(relTo(root, files.selected)).name}</Text>
-              : <Text bold wrap="wrap">{relTo(root, files.selected)}</Text>}
-            {width < NARROW_COLUMNS && splitPath(relTo(root, files.selected)).dir
-              ? <Text dimColor>{splitPath(relTo(root, files.selected)).dir}</Text>
-              : null}
-            {/* No hotkey: the desktop draws its chip beside the label, which read as "X ✕" (seen live). */}
-            <Button key="unselect" label="✕" plain dimColor onPress={() => actions.unselect()} />
-          </Box>
-          {/* Every action on one row, wrapping only when the dock is too narrow. */}
-          <Box key="selected-tools" flexDirection="row" flexWrap="wrap" gap={1}>
-            {selectedSteps
-              ? <Button key="file-history" label={`History (${selectedSteps})`} dimColor onPress={() => actions.history(files.selected!)} />
-              : null}
-            <Button key="open-file" label="Open" dimColor onPress={() => actions.open(files.selected!)} />
-            <Button key="copy-path" label="Copy path" dimColor onPress={press => actions.copy(files.selected!, false, press.surface)} />
-            <Button key="copy-full" label="Full path" dimColor onPress={press => actions.copy(files.selected!, true, press.surface)} />
-            {selectedSteps ? null : <Text dimColor>no edits recorded</Text>}
-          </Box>
+      {/* The file picked for Claude rides along with every prompt until ✕: one slim line, so it is never missed. */}
+      {files.selected !== null ? (
+        <Box key="selected" flexDirection="row" flexWrap="wrap" gap={1}>
+          <Text color="claude">Claude sees</Text>
+          <Text bold wrap="truncate-end">{splitPath(relTo(root, files.selected)).name}</Text>
+          {splitPath(relTo(root, files.selected)).dir ? <Text dimColor wrap="truncate-start">{splitPath(relTo(root, files.selected)).dir}</Text> : null}
+          {/* No hotkey: the desktop draws its chip beside the label, which read as "X ✕" (seen live). */}
+          <Button key="unselect" label="✕" plain dimColor onPress={() => actions.unselect()} />
+          {selectedSteps
+            ? <Button key="file-history" label={`History ${selectedSteps}`} plain dimColor onPress={() => actions.history(files.selected!)} />
+            : null}
+          <Button key="open-file" label="Open" plain dimColor onPress={() => actions.open(files.selected!)} />
+          <Button key="copy-path" label="Copy path" plain dimColor onPress={press => actions.copy(files.selected!, false, press.surface)} />
+          <Button key="copy-full" label="Full path" plain dimColor onPress={press => actions.copy(files.selected!, true, press.surface)} />
+          {selectedSteps ? null : <Text dimColor>no edits recorded</Text>}
         </Box>
-      )}
+      ) : null}
       {/* A file shown in the pane takes the tree's place; ← files brings the tree back as it was. */}
       {preview ? previewView(els, root, preview, actions.previewing, flash[lower(preview.path)] ? TONE_COLOR[flash[lower(preview.path)]!] : undefined) : searching ? searchResults(els, query, searchIndex, actions) : (
       <Box key="tree" flexDirection="column">
       {!(lower(root) in listing) && <Text dimColor>Reading the folder…</Text>}
       {lower(root) in listing && rows.length === 0 && <Text dimColor>This folder is empty.</Text>}
-      {shown.map(({ entry, depth, isOpen }) => {
+      {win.above ? <Text key="tree-above" dimColor>{`▲ ${win.above} above`}</Text> : null}
+      {shown.slice(win.start, win.end).map(({ entry, depth, isOpen }) => {
         const isDir = entry.kind === 'dir'
         const code = isDir ? dirStatus(git, entry.path) : fileStatus(git, entry.path)
         const tone = flash[lower(entry.path)]
@@ -369,6 +435,7 @@ export function filesView(
           </Button>
         )
       })}
+      {win.below ? <Text key="tree-below" dimColor>{`▼ ${win.below} below`}</Text> : null}
       {rows.length > shown.length && <Text dimColor>… {rows.length - shown.length} more rows (close a folder to see them)</Text>}
       </Box>
       )}

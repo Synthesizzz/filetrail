@@ -55,7 +55,7 @@ test('in a repo the search lists git\'s files; picking one opens the tree there,
   await clock.advance(200)
   expect(await ui.find({ key: 'hit-readme.md' })).toBeUndefined()
   expect(await ui.find({ key: rowKey('C:/work/demo/src/deep/readme-parser.ts') })).toBeDefined()
-  expect(await hasText(ui, 'Claude sees:')).toBe(true)
+  expect(await hasText(ui, 'Claude sees')).toBe(true)
   await ui.unmount()
 })
 

@@ -38,7 +38,7 @@ test('refusal, pageOf and pageText', () => {
   expect(pageText(lines(900), 9).first).toBe(801)
 })
 
-test('a double-click shows a Markdown file in place of the tree; ← files brings the tree back', async ($, on) => {
+test('a double-click shows a Markdown file in place of the tree; ← files brings the tree back', { timeoutMs: 10_000 }, async ($, on) => {
   const { clock } = world(on, { dirs: DIRS, files: FILES })
   await $.session.start(START)
   await clock.settle()

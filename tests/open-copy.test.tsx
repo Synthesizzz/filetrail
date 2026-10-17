@@ -62,7 +62,8 @@ test('folders listed again after a turn keep their spelling', async ($, on) => {
   await $.turn.start({ text: 'x', turnId: 't1' })
   await $.turn.complete({ ...DONE, turnId: 't1' })
   await pressRow(ui, rowKey('C:/work/demo/Src/App.ts'))
-  expect(await hasText(ui, 'Src/App.ts')).toBe(true)
-  expect(await hasText(ui, 'src/App.ts')).toBe(false)
+  // The selected file's line names its folder as spelled, not lower-cased.
+  expect(await hasText(ui, 'Src')).toBe(true)
+  expect(await hasText(ui, 'src')).toBe(false)
   await ui.unmount()
 })

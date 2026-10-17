@@ -74,10 +74,17 @@ test('gitActionSegs: running shimmers in its colour, done ticks, failure is red,
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = { 'C:\\work\\demo': [['README.md', 'file']] }
 
-/** The bar's rows, oldest first, as their text. */
+/**
+ * The git actions on show, as their text: the latest first (a chip beside the branch,
+ * a Text, while it is done), then the Client lines (a running one, the older ones).
+ */
 async function bar(ui: any): Promise<string[]> {
+  const chips: string[] = (await ui.findAll({ type: 'Text' }))
+    .map((t: any) => String(t.text ?? ''))
+    .filter((t: string) => /^ [✓✗⊘]/.test(t))
+    .map((t: string) => t.replace(/ /g, ' ').trim())
   const keys = (await ui.findAll({ type: 'Client' })).map((c: any) => c.key).filter((k: string) => k?.startsWith('git-'))
-  return Promise.all(keys.map((k: string) => rowText(ui, k)))
+  return [...new Set(chips)].concat(await Promise.all(keys.map((k: string) => rowText(ui, k))))
 }
 
 test('the git bar shows each action as it came out, the last three kept, until newer ones push them out', async ($, on) => {
@@ -108,7 +115,8 @@ test('the git bar shows each action as it came out, the last three kept, until n
   await ui.press({ key: 'git-more' })
   const rows = await bar(ui)
   expect(rows.length).toBe(MAX_ACTIONS)
-  expect(rows).toEqual(['✗ pull failed', '✓ checked out topic', '✓ stashed'])
+  // The latest stays a chip beside the branch; the older ones list under the chips, oldest first.
+  expect(rows).toEqual(['✓ stashed', '✗ pull failed', '✓ checked out topic'])
   expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('fewer')
   await ui.press({ key: 'git-more' })
   expect(await bar(ui)).toEqual(['✓ stashed'])

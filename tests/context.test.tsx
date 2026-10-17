@@ -45,11 +45,11 @@ test('a selected file rides along with every prompt until ✕ clears it', async 
 
   await $.prompt.submit({ ...TYPED, text: 'before selecting' })
   await pressRow(ui, rowKey('C:/work/demo/README.md'))
-  expect(await hasText(ui, 'Claude sees:')).toBe(true)
+  expect(await hasText(ui, 'Claude sees')).toBe(true)
   await $.prompt.submit({ ...TYPED, text: 'what is this file?' })
   await $.prompt.submit({ ...TYPED, text: 'and now?' })
   await ui.press({ key: 'unselect' })
-  expect(await hasText(ui, 'Claude sees:')).toBe(false)
+  expect(await hasText(ui, 'Claude sees')).toBe(false)
   await $.prompt.submit({ ...TYPED, text: 'after clearing' })
 
   expect(got.map(g => [g.text, (g.context ?? []).length])).toEqual([
@@ -67,12 +67,13 @@ test('an @path to a file of the project opens the tree there and selects it; oth
 
   await $.prompt.submit({ ...TYPED, text: 'mail a@b.com about @nothing/here.ts' })
   expect(await ui.find({ key: rowKey('C:/work/demo/src/a.ts') })).toBeUndefined()
-  expect(await hasText(ui, 'Claude sees:')).toBe(false)
+  expect(await hasText(ui, 'Claude sees')).toBe(false)
 
   await $.prompt.submit({ ...TYPED, text: 'explain @src/a.ts please' })
   await clock.advance(200)
   expect(await ui.find({ key: rowKey('C:/work/demo/src/a.ts') })).toBeDefined()
-  expect(await hasText(ui, 'src/a.ts')).toBe(true)
+  expect(await hasText(ui, 'a.ts')).toBe(true)
+  expect(await hasText(ui, 'src')).toBe(true)
   // The mentioned file is selected, so this very prompt already carries it.
   expect(got.at(-1)!.context![0]).toContain('selected src/a.ts')
   await ui.unmount()

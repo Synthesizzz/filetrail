@@ -24,6 +24,9 @@ its double-click and right-click on a row, and showing a file in the pane
   claude-code-filetree, Copyright (c) 2026 Kurt Buhler. MIT License.
   https://github.com/data-goblin/claude-code-filetree
 
+hooks/crab.ts draws the crab on the grid of the crab in the token-usage mod, by the
+same author, after the creature in Claude Code's banner.
+
 The rest of filetrail is written from scratch. Its file tree was also inspired
 by the feature set of claude-code-filetree.
 

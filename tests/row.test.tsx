@@ -85,3 +85,9 @@ test('fitRow drops a file\'s time before cutting the name, and finds the name by
   expect(fitRow(row, 22).map(s => s.t)).toEqual(['  ', '· ', 'notes-about-it.md'])
   expect(fitRow(row, 14).map(s => s.t)).toEqual(['  ', '· ', 'notes-abo…'])
 })
+
+test('fitRow drops a folder marked opt before cutting the name, keeping the pill', () => {
+  const row: Seg[] = [{ t: ' MD ' }, { t: ' notes.md', name: true }, { t: ' trail-demo/deep', opt: true }, { t: ' Reading ', right: true }]
+  expect(fitRow(row, 40).map(s => s.t)).toEqual([' MD ', ' notes.md', ' trail-demo/deep', ' Reading '])
+  expect(fitRow(row, 24).map(s => s.t)).toEqual([' MD ', ' notes.md', ' Reading '])
+})

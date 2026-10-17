@@ -1,10 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Turn } from '../types'
-import { FLASH_MS, foldersTo, targetOf } from '../hooks/activity'
+import { FLASH_MS, HOLD_MS, MIN_TREE_ROWS, clampTop, foldersTo, glide, targetOf, topFor, treeLines, treeRows, treeWindow } from '../hooks/activity'
 import { READ_COLOR, SELECTED_BG, TONE_COLOR, TONE_SHIMMER } from '../hooks/files-view'
-import { shimmer, TICK_MS } from '../hooks/row'
-import { KEY, PANE, START, pressRow, rowRuns, rowText, world } from './world'
+import { BAND_STEP, shimmer, TICK_MS } from '../hooks/row'
+import { DONE, KEY, PANE, START, pressRow, rowRuns, rowText, world } from './world'
 
 test('each tone paints with a colour the desktop draws (not the permission theme key)', () => {
   // Seen live: the desktop drew "· reading" in plain text with `permission`.
@@ -16,11 +16,14 @@ test('each tone paints with a colour the desktop draws (not the permission theme
 
 test('shimmer: brightest under the band, base far from it', () => {
   const p = ['a', 'b', 'c', 'd']
-  // phase 5 puts the band at 5 * 1.6 - 4 = 4 for a 10-letter run.
-  expect(shimmer(4, 5, 10, p)).toBe('d')
-  expect(shimmer(3, 5, 10, p)).toBe('c')
-  expect(shimmer(2, 5, 10, p)).toBe('b')
-  expect(shimmer(9, 5, 10, p)).toBe('a')
+  // phase 16 puts the band at 16 * 0.5 - 4 = 4 for a 10-letter run.
+  expect(BAND_STEP).toBe(0.5)
+  expect(shimmer(4, 16, 10, p)).toBe('d')
+  expect(shimmer(3, 16, 10, p)).toBe('c')
+  expect(shimmer(2, 16, 10, p)).toBe('b')
+  expect(shimmer(9, 16, 10, p)).toBe('a')
+  // A short step on a short tick: a smooth band, slower than the 1.6 letters a 90 ms tick took.
+  expect(TICK_MS).toBe(45)
 })
 
 /** The colour of each letter a row's shimmering runs drew, in order. */
@@ -39,7 +42,7 @@ async function letterColors(ui: any, key: string): Promise<string[]> {
   return out
 }
 
-test('a lit name shimmers: the band moves on the row\'s own clock, and stops once it fades', async ($, on) => {
+test('a lit name shimmers: the band moves on the row\'s own clock, and stops once the turn ends', async ($, on) => {
   const { clock } = world(on, { dirs: DIRS })
   await $.session.start(START)
   await clock.settle()
@@ -52,7 +55,11 @@ test('a lit name shimmers: the band moves on the row\'s own clock, and stops onc
   expect(before.every(c => TONE_SHIMMER.read.includes(c))).toBe(true)
   await ui.advance(TICK_MS * 3)
   expect(await letterColors(ui, key)).not.toEqual(before)
+  // Still shimmering past a search's fade: Claude is still on this file.
   await clock.advance(FLASH_MS + 100)
+  expect(await letterColors(ui, key)).not.toEqual([])
+  await $.turn.complete({ ...DONE, turnId: 't0' })
+  await clock.settle()
   expect(await letterColors(ui, key)).toEqual([])
   await ui.unmount()
 })
@@ -72,6 +79,44 @@ test('targetOf: reads and writes are followed, a search only lights up', () => {
   expect(targetOf({ tool: 'Grep', pattern: 'x', path: '/w/src' })).toEqual({ path: '/w/src', tone: 'read', follow: false })
   expect(targetOf({ tool: 'Grep', pattern: 'x' })).toBe(null)
   expect(targetOf({ tool: 'Bash', command: 'cat a.ts' })).toBe(null)
+})
+
+test('treeRows gives the tree what the pane has under its head, a few rows at least', () => {
+  expect(treeRows(29, 12)).toBe(17)
+  expect(treeRows(10, 12)).toBe(MIN_TREE_ROWS)
+})
+
+test('clampTop keeps the window inside the tree', () => {
+  expect(clampTop(-3, 50, 10)).toBe(0)
+  expect(clampTop(45, 50, 10)).toBe(40)
+  expect(clampTop(5, 8, 10)).toBe(0)
+})
+
+test('topFor leaves a row already well in view, else puts it mid-window', () => {
+  expect(topFor(15, 100, 20, 10)).toBe(10)
+  expect(topFor(60, 100, 20, 10)).toBe(50)
+  expect(topFor(11, 100, 20, 10)).toBe(1)
+  expect(topFor(98, 100, 20, 0)).toBe(80)
+})
+
+test('treeWindow: the rows on show, with a line for what lies above and below', () => {
+  // All fit: no marker lines.
+  expect(treeWindow(5, 0, 10)).toEqual({ top: 0, start: 0, end: 5, above: 0, below: 5 - 5 })
+  // At the top of a long tree: the last row of room says how many are below.
+  expect(treeWindow(50, 0, 10)).toEqual({ top: 0, start: 0, end: 9, above: 0, below: 41 })
+  // In the middle: a line each way.
+  expect(treeWindow(50, 20, 10)).toEqual({ top: 20, start: 20, end: 28, above: 20, below: 22 })
+  // At the end: nothing hidden below, the last row shows.
+  expect(treeWindow(50, 99, 10)).toEqual({ top: 41, start: 41, end: 50, above: 41, below: 0 })
+  expect(treeLines(treeWindow(50, 20, 10))).toBe(10)
+  expect(treeLines(treeWindow(5, 0, 10))).toBe(5)
+})
+
+test('glide eases from one top to another, ending on it', () => {
+  expect(glide(0, 40)).toEqual([18, 30, 38, 40])
+  expect(glide(40, 0)).toEqual([22, 10, 2, 0])
+  expect(glide(5, 5)).toEqual([])
+  expect(glide(0, 1)).toEqual([1])
 })
 
 test('foldersTo lists the folders down to a file, null outside the root', () => {
@@ -96,17 +141,33 @@ test('a Read lights its row and opens the tree down to it, then fades', async ($
   expect((await rowRuns(ui, rowKey(X))).find(r => r.text === 'x.ts')?.props.color).toBe(READ_COLOR)
   expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▾ ■ src\//)
 
-  // Still lit well past the old 2 s, then a quiet ◂ stays on the last file touched.
-  await clock.advance(FLASH_MS - 1000)
+  // The file Claude is on stays lit past the fade of a search's light, until it moves on.
+  await clock.advance(FLASH_MS + 1000)
   expect(await rowText(ui, rowKey(X))).toMatch(/x\.ts · reading$/)
-  await clock.advance(1100)
-  expect(await rowText(ui, rowKey(X))).toMatch(/x\.ts ◂$/)
 
-  // Touching another file moves the marker there.
+  // Touching another file moves the light there at once, and folds the folders not on its way.
   await $.tool.call({ tool: 'Read', file_path: 'C:\\work\\demo\\src\\a.ts' })
-  await clock.advance(FLASH_MS + 100)
-  expect(await rowText(ui, rowKey(X))).toMatch(/x\.ts$/)
+  await clock.advance(200)
+  // deep led only to x.ts: Claude has moved on, so it folds and x.ts is not drawn.
+  expect(await ui.find({ key: rowKey(X) })).toBeUndefined()
+  expect(await rowText(ui, rowKey('C:/work/demo/src/a.ts'))).toMatch(/a\.ts · reading$/)
+
+  // The turn ends: the light goes out, and a quiet ◂ stays on the last file touched.
+  await $.turn.complete({ ...DONE, turnId: 't0' })
+  await clock.settle()
   expect(await rowText(ui, rowKey('C:/work/demo/src/a.ts'))).toMatch(/a\.ts ◂$/)
+  await ui.unmount()
+})
+
+test('the file Claude is on stops shimmering on its own after a long while', async ($, on) => {
+  const { clock } = world(on, { dirs: DIRS })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.tool.call({ tool: 'Read', file_path: 'C:\\work\\demo\\src\\deep\\x.ts' })
+  // No turn end ever comes (the session was cut off): the light still goes out.
+  await clock.advance(HOLD_MS + 100)
+  expect(await rowText(ui, rowKey(X))).toMatch(/x\.ts ◂$/)
   await ui.unmount()
 })
 
@@ -137,6 +198,9 @@ test('a search lights a folder on show without opening it', async ($, on) => {
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ ■ src\/ · reading$/)
   expect(scrolls).toEqual([])
+  // A search's light fades on its own, turn or no turn.
+  await clock.advance(FLASH_MS + 100)
+  expect(await rowText(ui, rowKey('C:/work/demo/src'))).not.toMatch(/reading/)
   await ui.unmount()
 })
 
@@ -156,7 +220,7 @@ test('Files to History and back: a file\'s history, then Show in Files', async (
 
   await pressRow(ui, rowKey('C:/work/demo/src'))
   await pressRow(ui, rowKey('C:/work/demo/src/a.ts'))
-  expect(await rowText(ui, 'file-history')).toBe('History (2)')
+  expect(await rowText(ui, 'file-history')).toBe('History 2')
   await ui.press({ key: 'file-history' })
   expect(await ui.find({ type: 'Text', text: 'src/a.ts · 2 edits across 1 turn' })).toBeDefined()
 

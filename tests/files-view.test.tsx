@@ -32,7 +32,8 @@ test('Files: the root listing, git status, line counts and edit badges', { timeo
   await clock.advance(1000)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
 
-  expect(await ui.find({ type: 'Text', text: 'branch main ↑1' })).toBeDefined()
+  // The branch is a chip in the card's title bar: its name and commits ahead.
+  expect(await ui.find({ type: 'Text', text: 'main ↑1' })).toBeDefined()
   // Each tree row is a Client: its colours paint on the desktop, where a Button drops them.
   const rows = (await ui.findAll({ type: 'Client' })).map(b => b.key).filter(k => k?.startsWith('row-'))
   expect(rows).toEqual(ROOT_ROWS.map(n => rowKey(`C:/work/demo/${n}`)))
@@ -50,7 +51,7 @@ test('Files: the root listing, git status, line counts and edit badges', { timeo
   expect(src.find(r => r.text === '■ ')?.props.color).toBe(FOLDER_COLOR)
   expect(await rowText(ui, rowKey('C:/work/demo/tmp'))).toMatch(/^▸ ■ tmp\/ U$/)
   // The branch line: head, upstream, and the repo's changes at the right.
-  expect(await hasText(ui, 'origin/main')).toBe(true)
+  // The repo's changes are the chip beside it.
   expect(await ui.find({ type: 'Text', text: '+3 -1 ?:2 M:1' })).toBeDefined()
 
   // Opening it lists it and shows each file's status, counts and edits.

@@ -32,6 +32,7 @@ test('hintFor counts edits and distinct files; none for a turn without edits', (
 test('after a turn with edits the band offers a replay, under what the plugins beneath draw', async ($, on) => {
   world(on, { files: FILES })
   beneathBand(on)
+  on('prompt.submit', (_$: any, e: any) => ({ text: e.text }))
   await $.session.start(START)
   await $.turn.start({ text: 'rename', turnId: 't1' })
   await $.tool.call(edit('a.ts'))
@@ -43,10 +44,10 @@ test('after a turn with edits the band offers a replay, under what the plugins b
   expect(await hasText(ui, '▶ filetrail: 2 edits in 1 file')).toBe(true)
   expect(await ui.find({ key: 'replay' })).toBeDefined()
 
-  // A turn that changes nothing keeps the offer.
-  await $.turn.start({ text: 'a question', turnId: 't2' })
-  await $.turn.complete({ ...DONE, turnId: 't2' })
-  expect(await hasText(ui, '▶ filetrail: 2 edits in 1 file')).toBe(true)
+  // The next prompt takes the offer down: it was about the turn just read.
+  await $.prompt.submit({ text: 'next', wait: false, origin: { kind: 'composer' } })
+  expect(await hasText(ui, '▶ filetrail: 2 edits in 1 file')).toBe(false)
+  expect(await hasText(ui, 'beneath')).toBe(true)
   await ui.unmount()
 })
 
