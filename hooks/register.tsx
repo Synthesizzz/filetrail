@@ -3,10 +3,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Entry, FilesView, GitInfo, HistoryView, Step, Tab, Tone, Turn } from '../types'
+import type { Entry, FilesView, GitInfo, Hint, HistoryView, Step, Tab, Tone, Turn } from '../types'
 import { FLASH_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
-import { askText, fileStamp, historyMarkdown, projectName } from './export'
+import { hintFor, hintRow } from './band'
+import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
 import { filesView } from './files-view'
 import { parseNumstat, parseStatus } from './git'
 import {
@@ -27,6 +28,7 @@ const git = atom({ plugin: 'filetrail', key: 'git' } as const, null as GitInfo |
 const files = atom({ plugin: 'filetrail', key: 'files' } as const, { expanded: [], selected: null } as FilesView)
 const flash = atom({ plugin: 'filetrail', key: 'flash' } as const, {} as Record<string, Tone>)
 const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone } | null)
+const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | null)
 
 // The project whose history this session records: the cwd at session start.
 let root = ''
@@ -202,16 +204,35 @@ function folderName(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-async function openPane($: EngineInterface, focus = false) {
+async function openPane($: EngineInterface, focus = false, closeOnEscape = false) {
   let name = ''
   try { name = folderName(await $.session.cwd()) } catch { /* keep the bare title */ }
-  return $.ui.open({ id: PANE, title: name ? `Trail: ${name}` : 'Trail', ...(focus ? { focus: true } : {}) })
+  return $.ui.open({
+    id: PANE, title: name ? `Trail: ${name}` : 'Trail',
+    ...(focus ? { focus: true } : {}), ...(closeOnEscape ? { closeOnEscape: true } : {}),
+  })
+}
+
+/** How long the band gets to let go of the keys before the pane takes them. */
+const HAND_OVER_MS = 200
+
+/**
+ * Opens a turn in History, its first edit on show, with the keyboard on the pane and
+ * Escape closing it. The band's offer goes first: a pane only takes the keys while
+ * nothing else holds them, and a pressed band button does (Replay Theater found this).
+ */
+async function openReplay($: EngineInterface, turnId: string) {
+  await update($, hint, () => null)
+  await update($, tab, () => 'history')
+  await update($, view, () => ({ turn: turnId, file: null, step: 0 }))
+  await $.clock.sleep(HAND_OVER_MS)
+  return openPane($, true, true)
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({ name: 'trail', description: 'Show the filetrail pane (file tree and edit history); args: export, clear' })
+    await $.command.register({ name: 'trail', description: 'Show the filetrail pane (file tree and edit history); args: replay, export, clear' })
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
     await listDir($, root)
     scheduleGit($)
@@ -273,6 +294,8 @@ export const register: Register = on => {
     pending = null
     if (turn && turn.steps.length) {
       try { await saveTurn($, turn) } catch (err) { $.ui.log(`filetrail: history was not saved: ${String(err)}`) }
+      // The band offers this turn until it is replayed or another turn changes files.
+      await update($, hint, () => hintFor(turn))
     }
     // Bash may have changed files too: list the open folders and read git again.
     await relist($)
@@ -290,6 +313,12 @@ export const register: Register = on => {
       return { text: opened.isPlaced ? 'filetrail opened.' : `filetrail is open but not drawn: ${opened.reason}` }
     }
     if (args === 'export') return { text: await exportHistory($) }
+    if (args === 'replay') {
+      const latest = (await read($, history)).at(-1)
+      if (!latest) return { text: 'filetrail: no edits recorded in this project yet.' }
+      await openReplay($, latest.id)
+      return { text: `filetrail: replaying ${latest.steps.length} edit${latest.steps.length === 1 ? '' : 's'} from ${stamp(latest.at)}.` }
+    }
     // Clearing cannot be undone, so it asks for the word first.
     if (args === 'clear') {
       const n = (await read($, history)).length
@@ -299,7 +328,39 @@ export const register: Register = on => {
       const n = await clearHistory($)
       return { text: `filetrail: cleared ${n} turn${n === 1 ? '' : 's'} of history for ${projectName(root)}.` }
     }
-    return { text: 'filetrail: /trail opens the pane, /trail export writes the history as Markdown, /trail clear deletes this project\'s history.' }
+    return { text: 'filetrail: /trail opens the pane, /trail replay steps through the last turn\'s edits, /trail export writes the history as Markdown, /trail clear deletes this project\'s history.' }
+  })
+
+  // The band above the prompt: the offer to replay the last turn that changed files,
+  // under whatever the plugins beneath draw. A survey has the band to itself.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const offer = await read($, hint)
+    if (!offer) return next(e)
+    const beneath = await next(e)
+    const els = $.ui.resolve(e)
+    const { Box } = els
+    return (
+      <Box flexDirection="column">
+        {beneath}
+        {hintRow(els, offer, () => fire($, 'replaying', () => openReplay($, offer.turn)))}
+      </Box>
+    )
+  }).catch(async ($, e, next) => {
+    // Never take the band from the plugins beneath: draw theirs, with one line saying why ours is missing.
+    const beneath = next.called ? undefined : await next(e)
+    try {
+      const { Box, Text } = $.ui.resolve(e)
+      const reason = next.error instanceof Error ? next.error.message : String(next.error)
+      return (
+        <Box flexDirection="column">
+          {beneath}
+          <Text dimColor>filetrail could not draw its replay line: {reason}</Text>
+        </Box>
+      )
+    } catch {
+      return beneath
+    }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -337,6 +398,7 @@ export const register: Register = on => {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),
                 exportAll: () => fire($, 'exporting', async () => $.ui.toast(await exportHistory($))),
+                close: () => fire($, 'closing the pane', () => $.ui.close({ id: PANE })),
                 reveal: path => fire($, 'showing in Files', async () => {
                   await update($, tab, () => 'files')
                   await reveal($, path, true)

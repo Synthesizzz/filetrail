@@ -15,7 +15,8 @@ A file tree and a history of Claude's edits in one pane for Claude Code, with Fi
 ### History
 
 - A timeline of the turns that changed files, newest first: the time, the first line of the prompt, and how many files, edits and lines changed. Edits that were refused or failed are counted as not applied.
-- Open a turn to step through its edits one diff at a time: a strip of numbered cells, Prev and Next, the file, the tool, the line where the change starts, `+N -N`, and a diff with line numbers. Refused and failed edits are marked.
+- After a turn that changed files, a line above the prompt offers it: `▶ filetrail: 5 edits in 3 files [Replay]`. Replay (or `r` once the band has the keys) opens that turn in History on its first edit, with the keyboard on the pane, so Enter steps forward and Escape closes it. The offer stays until it is replayed or another turn changes files; a turn that changes nothing leaves it. It sits under whatever other mods draw there.
+- Open a turn to step through its edits one diff at a time: a strip of numbered cells, Prev and Next, the file, the tool, the line where the change starts, `+N -N`, and a diff with line numbers. Refused and failed edits are marked. A diff longer than 20 lines folds there with a Show all button; moving to another edit folds it again.
 - Click a file name to see that file's edits across every turn. Show in Files takes you to it in the tree.
 - Ask Claude puts the step (file, turn and diff, up to 40 lines) after whatever is in the prompt box, so you can type a question and send it yourself.
 - Export writes the project's whole history as Markdown to `~/.claude/filetrail/exports/<project>-<YYYYMMDD-HHMM>.md`.
@@ -35,6 +36,7 @@ Claude Code runs an installed copy of the mod. After a change, raise `version` i
 ## /trail
 
 - `/trail`: open the pane
+- `/trail replay`: open the latest turn that changed files, as Replay does
 - `/trail export`: write the history as Markdown and say where
 - `/trail clear`: say how many turns of this project's history would be deleted; `/trail clear yes` deletes them. Other projects are left alone.
 
@@ -50,7 +52,11 @@ While the pane has the keyboard:
 | `t` | From a file's history to the turn of the edit on show |
 | `o` | Show the edit's file in Files |
 | `a` | Ask Claude about the edit on show |
+| `s` | Show all, or show fewer, lines of a long diff |
+| `c`, Escape | Close the pane (Escape when it was opened by Replay) |
 | `e` | Export (on the timeline) |
+
+In the band above the prompt, `r` presses Replay once the band has the keys (a click, or ctrl+x tab).
 
 ## Limits
 
@@ -72,7 +78,7 @@ Type checking uses the types Claude Code lays in `.claude-plugin/types/` once it
 
 ## Credits
 
-`hooks/diff.ts` is adapted from Replay Theater in [claude-code-playground](https://github.com/anthropics/claude-code-playground) (Apache License 2.0). See NOTICE.
+`hooks/diff.ts` is adapted from Replay Theater in [claude-code-playground](https://github.com/anthropics/claude-code-playground) (Apache License 2.0). See NOTICE. The replay offer after a turn, opening it with the keyboard on the pane, and folding long diffs follow Replay Theater's design.
 
 ## License
 

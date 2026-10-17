@@ -72,12 +72,15 @@ export function statusLabel(step: Step): string {
   return step.status === 'ok' ? '' : step.status === 'pending' ? 'no answer' : step.status
 }
 
-function diffRows(els: Els, step: Step, width: number) {
+/** Diff lines a step shows before Show all; a longer diff folds there (Replay Theater kept 12). */
+export const FOLD_LINES = 20
+
+function diffRows(els: Els, step: Step, width: number, max = Infinity) {
   const { Text } = els
   if (!step.diff.length) return [<Text dimColor>  (no line changes)</Text>]
   const nums = gutter(step.diff, step.line)
   const w = Math.max(0, ...nums.map(n => n.length))
-  return step.diff.map((l, k) => {
+  return step.diff.slice(0, max).map((l, k) => {
     const color = l.op === '+' ? 'success' : l.op === '-' ? 'error' : undefined
     const mark = l.op === '~' ? ' ' : l.op
     // Non-breaking spaces: the desktop collapses runs of plain ones, which would flatten the code's indentation.
@@ -94,6 +97,8 @@ export type HistoryActions = {
   ask: (step: Step, turn: Turn) => void
   /** Writes the project's whole history to a Markdown file. */
   exportAll: () => void
+  /** Closes the pane. */
+  close: () => void
 }
 
 function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now: number) {
@@ -132,7 +137,9 @@ function stepper(els: Els, turns: readonly Turn[], view: HistoryView, actions: H
   if (!steps.length) return timeline(els, turns, actions, now)
   const k = Math.max(0, Math.min(view.step, steps.length - 1))
   const { step, turn } = steps[k]!
-  const go = (to: number) => set({ ...view, step: Math.max(0, Math.min(to, steps.length - 1)) })
+  // Another step folds its diff again.
+  const go = (to: number) => set({ ...view, step: Math.max(0, Math.min(to, steps.length - 1)), full: false })
+  const folds = step.diff.length > FOLD_LINES
   const status = statusLabel(step)
   const header = view.file !== null
     ? `${steps[0]!.step.rel} · ${steps.length} edit${steps.length === 1 ? '' : 's'} across ${new Set(steps.map(p => p.turn.id)).size} turn(s)`
@@ -140,18 +147,20 @@ function stepper(els: Els, turns: readonly Turn[], view: HistoryView, actions: H
 
   return (
     <Box key="stepper" flexDirection="column">
-      <Box key="nav-top" flexDirection="row" gap={1}>
+      {/* Rows of buttons wrap: a docked pane is narrow, and a row that does not cut its last button off (seen live: Close). */}
+      <Box key="nav-top" flexDirection="row" flexWrap="wrap" gap={1}>
         <Button key="back" label="◀ Timeline" hotkey="b" dimColor onPress={() => set(TIMELINE)} />
         {view.file !== null && <Button key="to-turn" label="This turn" hotkey="t" dimColor onPress={() => set({ turn: turn.id, file: null, step: turn.steps.indexOf(step) })} />}
+        <Button key="close" label="Close" hotkey="c" role="dismiss" dimColor onPress={() => actions.close()} />
       </Box>
       <Text bold wrap="truncate-end">{header}</Text>
-      <Box key="strip" flexDirection="row" gap={0}>
+      <Box key="strip" flexDirection="row" flexWrap="wrap" gap={0}>
         {steps.map((_, n) => (
           <Button key={`cell-${n}`} plain {...(n === k ? {} : { dimColor: true })} onPress={() => go(n)}>{n === k ? `[${n + 1}]` : ` ${n + 1} `}</Button>
         ))}
       </Box>
       <Text bold>step {k + 1} of {steps.length}</Text>
-      <Box key="file-row" flexDirection="row" gap={2}>
+      <Box key="file-row" flexDirection="row" flexWrap="wrap" gap={2}>
         <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}>{step.rel}</Button>
         <Button key="reveal" label="Show in Files" hotkey="o" dimColor onPress={() => actions.reveal(step.path)} />
       </Box>
@@ -162,11 +171,14 @@ function stepper(els: Els, turns: readonly Turn[], view: HistoryView, actions: H
         {status ? <Text color={step.status === 'denied' ? 'error' : 'warning'}>{status}</Text> : null}
       </Box>
       <Box key="diff" flexDirection="column" marginTop={1}>
-        {diffRows(els, step, width)}
+        {diffRows(els, step, width, folds && !view.full ? FOLD_LINES : Infinity)}
+        {folds && !view.full && <Button key="show-all" label={`Show all (${step.diff.length - FOLD_LINES} more lines)`} hotkey="s" dimColor onPress={() => set({ ...view, step: k, full: true })} />}
+        {folds && view.full && <Button key="show-fewer" label="Show fewer" hotkey="s" dimColor onPress={() => set({ ...view, step: k, full: false })} />}
       </Box>
-      <Box key="nav" flexDirection="row" gap={2} marginTop={1}>
+      <Box key="nav" flexDirection="row" flexWrap="wrap" gap={2} marginTop={1}>
         <Button key="prev" label="◀ Prev" hotkey="p" onPress={() => go(k - 1)} />
-        <Button key="next" label="Next ▶" hotkey="n" onPress={() => go(k + 1)} />
+        {/* The ring starts on Next, so Enter steps forward as soon as the pane has the keys. */}
+        <Button key="next" label="Next ▶" hotkey="n" autoFocus onPress={() => go(k + 1)} />
         <Button key="ask" label="Ask Claude" hotkey="a" dimColor onPress={() => actions.ask(step, turn)} />
       </Box>
     </Box>

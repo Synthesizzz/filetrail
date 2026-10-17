@@ -41,7 +41,12 @@ export type HistoryView = {
   turn: string | null
   file: string | null
   step: number
+  /** True once Show all unfolded the step's diff past its first lines; a move to another step folds it. */
+  full?: boolean
 }
+
+/** The band's offer after a turn that changed files: which turn, and what it changed. */
+export type Hint = { turn: string; edits: number; files: number }
 
 /** One row of a directory listing. `path` is absolute, forward slashes, as the disk spells it. */
 export type Entry = { name: string; path: string; kind: 'dir' | 'file' }
@@ -81,6 +86,8 @@ declare module 'claude-code' {
       flash: Record<string, Tone>
       /** The path Claude touched last (lower-cased) and how: marked ◂ until another is touched. */
       last: { path: string; tone: Tone } | null
+      /** What the band above the prompt offers to replay; null once replayed or before any edit. */
+      hint: Hint | null
     }
   }
 }

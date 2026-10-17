@@ -54,7 +54,10 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', (_$: any, e: any) => ({ text: e.text }))
   on('command.register', () => ({ value: undefined }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const opens: unknown[] = []
+  on('ui.open', (_$: any, e: any) => { opens.push(e); return { value: { isPlaced: true } } })
+  const closes: unknown[] = []
+  on('ui.close', (_$: any, e: any) => { closes.push(e); return { value: undefined } })
   on('fs.exists', (_$: any, e: any) => ({ value: e.path in files }))
   on('fs.read', (_$: any, e: any) => ({ value: files[e.path] }))
   on('tool.call', (_$: any, e: any) => {
@@ -91,7 +94,7 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     logs.push(String(e.text))
     return { value: undefined }
   })
-  return { history, store, clock, lists, ran, scrolls, logs, writes, fills, toasts }
+  return { history, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes }
 }
 
 /** Text with the non-breaking spaces the mod draws (indents, diff lines) read as plain ones. */
