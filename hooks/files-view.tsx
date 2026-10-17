@@ -9,7 +9,7 @@ import type { DirCounts } from './git'
 import { relTo } from './history'
 import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
-import { rowPresses } from './presses'
+import { rowCopies, rowOpens, rowPresses } from './presses'
 import { findFiles } from './search'
 import { editCounts, hasEditsBelow, lower, visibleRows } from './tree'
 
@@ -34,6 +34,14 @@ export type FilesActions = {
   copy: (path: string, full: boolean, surface: string) => void
   /** Shows every kept git action in the bar, or only the latest again. */
   toggleGitLog: () => void
+  /** Lists the open folders again, reads git again and rebuilds the search's file list. */
+  refresh: () => void
+  /** Leaves dotfiles out of the tree, or shows them again. */
+  toggleDots: () => void
+  /** Closes every folder. */
+  collapseAll: () => void
+  /** Opens the tree down to the selected file and scrolls to it. */
+  goToSelected: () => void
 }
 
 /** The search results in place of the tree: file name first, folder dimmed, the best matches on top. */
@@ -214,7 +222,7 @@ export function filesView(
   const Client = 'Client' in els ? els.Client : undefined
   const name = root.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? root
   const counts = editCounts(turns)
-  const rows = visibleRows(root, listing, files.expanded)
+  const rows = visibleRows(root, listing, files.expanded, files.hideDots === true)
   const shown = rows.slice(0, MAX_ROWS)
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
@@ -225,7 +233,17 @@ export function filesView(
     <Box key="files" flexDirection="column" gap="md">
       {/* As filetree heads its tree: the folder, then the branch and its upstream with the repo's changes at the right. */}
       <Box key="files-head" flexDirection="column" gap="xs">
-        <Text bold color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
+        <Box key="name-line" flexDirection="row" flexWrap="wrap" gap={1}>
+          <Text bold color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
+          <Box flexGrow={1} />
+          {/* filetree's header buttons, its plain Unicode glyphs; no hotkeys (the desktop draws a chip beside each). */}
+          <Box key="tree-tools" flexDirection="row" gap={1}>
+            <Button key="refresh" label="↻" plain dimColor onPress={() => actions.refresh()} />
+            <Button key="dots" label={files.hideDots ? '○' : '◉'} plain dimColor onPress={() => actions.toggleDots()} />
+            <Button key="collapse" label="⊟" plain dimColor onPress={() => actions.collapseAll()} />
+            {files.selected !== null ? <Button key="go-selected" label="⌖" plain dimColor onPress={() => actions.goToSelected()} /> : null}
+          </Box>
+        </Box>
         <Box key="branch-line" flexDirection="row" gap={1}>
           <Text dimColor={!git} wrap="truncate-end" {...(git?.branch ? { color: 'claude', bold: true } : {})}>{branchText(git)}</Text>
           {git?.branch?.upstream ? <Text dimColor wrap="truncate-end">{git.branch.upstream}</Text> : null}
@@ -319,6 +337,9 @@ export function filesView(
         else if (!isDir && entry.at) segs.push({ t: `${NNBSP}${stampOf(entry.at)}`, c: GIT_HEX.muted, right: true, opt: true })
         if (Client) {
           rowPresses.set(key, press)
+          // Double-click a file to open it, right-click a row to copy its path (shift: the whole path).
+          if (!isDir) rowOpens.set(key, () => actions.open(entry.path))
+          rowCopies.set(key, (full, surface) => actions.copy(entry.path, full, surface))
           // As wide as the pane, so the row knows its room and fits itself (it never wraps).
           // Monospace, as filetree's terminal rows are: the dates and badges line up in a column.
           return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, ...(isSelected ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />

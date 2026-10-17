@@ -16,8 +16,9 @@ hooks/row.tsx follows the approach of claude-code-filetree's hooks/rows.tsx:
 tree rows drawn by a surface module (a Client) in plain Text, so their colours
 paint on the desktop, with the press taken from onPointer and sent to the hooks
 module by post. filetrail draws one Client per row and keeps its own row model.
-The shimmer's band and palettes, and the git verbs and tones of the git bar
-(hooks/git-actions.ts), follow the same mod.
+The shimmer's band and palettes, the git verbs and tones of the git bar
+(hooks/git-actions.ts), the tree's look on the desktop, its header buttons and
+its double-click and right-click on a row follow the same mod.
 
   claude-code-filetree, Copyright (c) 2026 Kurt Buhler. MIT License.
   https://github.com/data-goblin/claude-code-filetree

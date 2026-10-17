@@ -13,7 +13,7 @@ import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
 import { filesView } from './files-view'
-import { rowPresses } from './presses'
+import { clearRows, rowCopies, rowOpens, rowPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import {
@@ -542,17 +542,20 @@ export const register: Register = on => {
 
   // A tree row is a Client (hooks/row.tsx) so its colours paint on the desktop; its press
   // arrives here as a post, and the row's own action runs, as a Button's onPress would.
+  // A double-click's second click opens a file (a folder has nothing to open, so it is
+  // let be rather than closing what the first click opened); a right-click copies the path.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { press?: unknown } | null
-    const press = e.requestId === PANE && data && typeof data === 'object' && data.press === true ? rowPresses.get(e.element) : undefined
-    if (!press) return next(e)
-    press()
-    return {}
+    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown } | null
+    if (e.requestId !== PANE || !data || typeof data !== 'object') return next(e)
+    if (data.press === true && rowPresses.has(e.element)) { rowPresses.get(e.element)!(); return {} }
+    if (data.open === true) { rowOpens.get(e.element)?.(); return {} }
+    if (data.copy === true && rowCopies.has(e.element)) { rowCopies.get(e.element)!(data.full === true, e.surface); return {} }
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
-    rowPresses.clear()
+    clearRows()
     const { Box, Text, Button } = els
     const current = await read($, tab)
     const running = await read($, live)
@@ -591,6 +594,17 @@ export const register: Register = on => {
                 open: path => fire($, 'opening the file', () => openFile($, path)),
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
+                refresh: () => fire($, 'refreshing', async () => {
+                  await relist($)
+                  await refreshGit($)
+                  if (await read($, index)) await ensureIndex($)
+                }),
+                toggleDots: () => fire($, 'showing dotfiles', () => update($, files, f => ({ ...f, hideDots: !f.hideDots }))),
+                collapseAll: () => fire($, 'closing the folders', () => update($, files, f => ({ ...f, expanded: [] }))),
+                goToSelected: () => fire($, 'going to the selected file', async () => {
+                  const at = (await read($, files)).selected
+                  if (at) await reveal($, at, true)
+                }),
                 openHit: rel => fire($, 'opening a search result', async () => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)

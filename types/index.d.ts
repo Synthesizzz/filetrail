@@ -68,8 +68,8 @@ export type GitInfo = {
 }
 
 /** The Files tab: open folders (lower-cased paths), the selected path, and the search box's text ('' or absent: the tree). */
-/** `gitOpen`: the git bar shows every kept action, not only the latest. */
-export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean }
+/** `gitOpen`: the git bar shows every kept action, not only the latest. `hideDots`: dotfiles left out of the tree. */
+export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean }
 
 /** Every file of the project, relative to its root, for the search box; `complete` false when the list was cut short. */
 export type SearchIndex = { files: string[]; complete: boolean }

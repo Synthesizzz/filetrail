@@ -37,11 +37,12 @@ export function toEntries(dir: string, listed: readonly Listed[]): { entries: En
 export type Row = { entry: Entry; depth: number; isOpen: boolean }
 
 /** The rows on show: the root's entries, and each open folder's beneath it. */
-export function visibleRows(root: string, listing: Readonly<Record<string, Entry[]>>, expanded: readonly string[]): Row[] {
+export function visibleRows(root: string, listing: Readonly<Record<string, Entry[]>>, expanded: readonly string[], hideDots = false): Row[] {
   const open = new Set(expanded)
   const rows: Row[] = []
   const walk = (dir: string, depth: number) => {
     for (const entry of listing[lower(dir)] ?? []) {
+      if (hideDots && entry.name.startsWith('.')) continue
       const isOpen = entry.kind === 'dir' && open.has(lower(entry.path))
       rows.push({ entry, depth, isOpen })
       if (isOpen) walk(entry.path, depth + 1)

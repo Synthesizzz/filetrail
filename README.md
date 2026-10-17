@@ -16,6 +16,8 @@ A file tree and a history of Claude's edits in one pane for Claude Code, with Fi
 - The search box finds files by name across the project (git's file list in a repo, a walk of the folders otherwise, skipping `node_modules` and the like): names that start with the text first, then names that contain it, then paths. The results replace the tree; picking one opens the tree to it, selected. ✕ goes back to the tree.
 - Selecting a file shows `Claude sees: <file>` under the header: every prompt you send then carries one line naming the file, so "this file" means it, until ✕ clears the selection. Beside it: History (N) opens its history, Open opens it in the machine's default app, and Copy path and Copy full path put its path from the project root, or whole, on the clipboard.
 - `@path` in a prompt that names a file of the project opens the tree to it and selects it.
+- Double-click a file to open it in its default app (a folder only opens and closes); right-click a row to copy its path from the project root, or with shift held its whole path.
+- Buttons beside the folder name: `↻` lists the open folders and reads git again, `◉`/`○` shows or hides dotfiles, `⊟` closes every folder, and `⌖` (with a file selected) opens the tree back to it.
 - In a narrow pane a row never wraps: the name is cut with `…` first, then the counts after it give way; the `· reading` word always stays.
 
 ### History

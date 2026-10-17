@@ -24,11 +24,14 @@ export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boole
  * the monospace face, so columns line up from row to row.
  */
 export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number; bg?: string; mono?: boolean }
-/** What a row posts when pressed. */
-export type RowPost = { press: true }
+/** What a row posts: a click, the second click of a double-click, or a right-click (shift for the whole path). */
+export type RowPost = { press: true } | { open: true } | { copy: true; full: boolean }
+
+/** Two clicks this close (ms) on one row are a double-click, as filetree times them. */
+export const DOUBLE_MS = 450
 
 /** `ref` is mutable on purpose: the running timer is not a value to redraw on. */
-type Local = { hover: boolean; phase: number; ref: { stop?: () => void } }
+type Local = { hover: boolean; phase: number; ref: { stop?: () => void; lastDown?: number } }
 
 /** How often the band moves one step. */
 export const TICK_MS = 90
@@ -101,7 +104,19 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
     const cur = surface.state ?? state
     if (e.type === 'enter' || (e.type === 'move' && !cur.hover)) { if (!cur.hover) surface.setState({ ...cur, hover: true }); return }
     if (e.type === 'leave') { if (cur.hover) surface.setState({ ...cur, hover: false }); return }
-    if (e.type === 'down' && (e.button ?? 'left') === 'left') surface.post({ press: true } satisfies RowPost)
+    if (e.type !== 'down') return
+    if (e.button === 'right') { surface.post({ copy: true, full: e.shift === true } satisfies RowPost); return }
+    if ((e.button ?? 'left') !== 'left') return
+    // A second click soon after the first opens; the first has already pressed (selected).
+    const at = Date.now()
+    const ref = (surface.state ?? state).ref
+    if (ref.lastDown !== undefined && at - ref.lastDown < DOUBLE_MS) {
+      ref.lastDown = undefined
+      surface.post({ open: true } satisfies RowPost)
+      return
+    }
+    ref.lastDown = at
+    surface.post({ press: true } satisfies RowPost)
   })
   // Once a click gave it the focus, Enter presses it again, as on a Button.
   surface.onKey(e => { if (e.key === 'return') surface.post({ press: true } satisfies RowPost) })
