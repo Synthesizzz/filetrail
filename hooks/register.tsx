@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitInfo, Hint, HistoryView, SearchIndex, Step, StepStatus, Tab, Tone, Turn } from '../types'
+import type { Entry, FilesView, GitActionEntry, GitInfo, Hint, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, Turn } from '../types'
 import { FLASH_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
@@ -16,6 +16,7 @@ import { filesView } from './files-view'
 import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
+import { pageOf, pageText, PAGE_LINES, refusal } from './preview'
 import {
   addTurn, byteSize, BUDGET_BYTES, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
   isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
@@ -39,6 +40,7 @@ const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | 
 const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | null)
 const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as SearchIndex | null)
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
+const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as Preview | null)
 // One build at a time: typing fast must not start a listing per key.
 let indexing: Promise<void> | null = null
 
@@ -361,6 +363,33 @@ async function finishGitActions($: EngineInterface, ids: readonly string[], outc
   await update($, gitLog, list => list.map(a => (ids.includes(a.id) ? { ...a, state } : a)))
 }
 
+/**
+ * Shows a file in the pane at a page: "Reading…" at once, then the page, or why not.
+ * The text is read again for each page rather than kept, so state holds one page.
+ */
+async function loadPreview($: EngineInterface, path: string, page: number): Promise<void> {
+  await update($, preview, cur => (cur && lower(cur.path) === lower(path) && cur.source !== undefined ? { ...cur, page } : { path, page }))
+  let text: string
+  try {
+    text = String(await $.fs.read(path))
+  } catch (err) {
+    // The read stops at 4 MiB; anything else is a file gone or unreadable.
+    const reason: Preview['reason'] = /MiB|large|size/i.test(String(err)) ? 'large' : 'missing'
+    await update($, preview, () => ({ path, page, reason }))
+    return
+  }
+  const why = refusal(text)
+  if (why) { await update($, preview, () => ({ path, page, reason: why })); return }
+  const shown = pageText(text, page)
+  await update($, preview, () => ({ path, page: Math.floor((shown.first - 1) / PAGE_LINES), source: shown.source, total: shown.total }))
+}
+
+/** The preview reads its file again after Claude changed it, on the same page. */
+async function refreshPreview($: EngineInterface, path: string): Promise<void> {
+  const cur = await read($, preview)
+  if (cur && lower(cur.path) === lower(path)) await loadPreview($, cur.path, cur.page)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
@@ -431,6 +460,7 @@ export const register: Register = on => {
       const dir = lower(parentOf(steps[0].path))
       if (dir in (await read($, listing))) await listDir($, parentOf(steps[0].path))
       scheduleGit($)
+      await refreshPreview($, steps[0].path).catch(err => $.ui.log(`filetrail: the preview did not update: ${String(err)}`))
       if (target) await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     }
     return r
@@ -602,6 +632,15 @@ export const register: Register = on => {
                 }),
                 toggleDots: () => fire($, 'showing dotfiles', () => update($, files, f => ({ ...f, hideDots: !f.hideDots }))),
                 collapseAll: () => fire($, 'closing the folders', () => update($, files, f => ({ ...f, expanded: [] }))),
+                preview: path => fire($, 'showing the file', () => loadPreview($, path, 0)),
+                previewing: {
+                  back: () => fire($, 'going back to the tree', () => update($, preview, () => null)),
+                  open: path => fire($, 'opening the file', () => openFile($, path)),
+                  page: page => fire($, 'turning the page', async () => {
+                    const cur = await read($, preview)
+                    if (cur) await loadPreview($, cur.path, page)
+                  }),
+                },
                 goToSelected: () => fire($, 'going to the selected file', async () => {
                   const at = (await read($, files)).selected
                   if (at) await reveal($, at, true)
@@ -610,12 +649,16 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),
                 exportAll: () => fire($, 'exporting', async () => $.ui.toast(await exportHistory($))),
                 close: () => fire($, 'closing the pane', () => $.ui.close({ id: PANE })),
+                view: (path, line) => fire($, 'showing the file', async () => {
+                  await update($, tab, () => 'files')
+                  await loadPreview($, path, pageOf(line))
+                }),
                 reveal: path => fire($, 'showing in Files', async () => {
                   await update($, tab, () => 'files')
                   await reveal($, path, true)

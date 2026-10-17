@@ -3,7 +3,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitActionKind, GitInfo, SearchIndex, Tone, Turn } from '../types'
+import type { Entry, FilesView, GitActionEntry, GitActionKind, GitInfo, Preview, SearchIndex, Tone, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
@@ -11,6 +11,8 @@ import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import type { Tool, ToolsProps } from './tools'
+import { previewView } from './preview'
+import type { PreviewActions } from './preview'
 import { findFiles } from './search'
 import { editCounts, hasEditsBelow, lower, visibleRows } from './tree'
 
@@ -43,6 +45,10 @@ export type FilesActions = {
   collapseAll: () => void
   /** Opens the tree down to the selected file and scrolls to it. */
   goToSelected: () => void
+  /** Shows a file in the pane in place of the tree. */
+  preview: (path: string) => void
+  /** What the preview's buttons do. */
+  previewing: PreviewActions
 }
 
 /** The search results in place of the tree: file name first, folder dimmed, the best matches on top. */
@@ -213,7 +219,7 @@ export function filesView(
   els: Els, root: string, listing: Readonly<Record<string, Entry[]>>, files: FilesView,
   git: GitInfo | null, turns: readonly Turn[], flash: Readonly<Record<string, Tone>>,
   last: { path: string; tone: Tone } | null, actions: FilesActions, width = 60,
-  searchIndex: SearchIndex | null = null, gitLog: readonly GitActionEntry[] = [],
+  searchIndex: SearchIndex | null = null, gitLog: readonly GitActionEntry[] = [], preview: Preview | null = null,
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -264,7 +270,7 @@ export function filesView(
       </Box>
       {/* Under the branch, not under the tree: the pane scrolls as one, so a footer below a long tree is out of sight. */}
       {gitBar(els, gitLog, files.gitOpen === true, actions)}
-      {Input && (
+      {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">
             <Input key="search" placeholder="Search files" value={query} onInput={(v: string) => actions.search(v)} onSubmit={(v: string) => actions.search(v)} />
@@ -298,7 +304,8 @@ export function filesView(
           </Box>
         </Box>
       )}
-      {searching ? searchResults(els, query, searchIndex, actions) : (
+      {/* A file shown in the pane takes the tree's place; ← files brings the tree back as it was. */}
+      {preview ? previewView(els, root, preview, actions.previewing, flash[lower(preview.path)] ? TONE_COLOR[flash[lower(preview.path)]!] : undefined) : searching ? searchResults(els, query, searchIndex, actions) : (
       <Box key="tree" flexDirection="column">
       {!(lower(root) in listing) && <Text dimColor>Reading the folder…</Text>}
       {lower(root) in listing && rows.length === 0 && <Text dimColor>This folder is empty.</Text>}
@@ -348,8 +355,8 @@ export function filesView(
         else if (!isDir && entry.at) segs.push({ t: `${NNBSP}${stampOf(entry.at)}`, c: GIT_HEX.muted, right: true, opt: true })
         if (Client) {
           rowPresses.set(key, press)
-          // Double-click a file to open it, right-click a row to copy its path (shift: the whole path).
-          if (!isDir) rowOpens.set(key, () => actions.open(entry.path))
+          // Double-click a file to show it here, right-click a row to copy its path (shift: the whole path).
+          if (!isDir) rowOpens.set(key, () => actions.preview(entry.path))
           rowCopies.set(key, (full, surface) => actions.copy(entry.path, full, surface))
           // As wide as the pane, so the row knows its room and fits itself (it never wraps).
           // Monospace, as filetree's terminal rows are: the dates and badges line up in a column.

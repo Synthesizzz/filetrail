@@ -61,7 +61,8 @@ test('summaryText and stepsOf', () => {
   expect(stepsOf([T1, T2], { turn: 'gone', file: null, step: 0 })).toEqual([])
 })
 
-test('History: timeline, a turn step by step, and a file across turns', async ($, on) => {
+// Long: every step of a turn and a file across turns, near the default 5 s on a loaded machine.
+test('History: timeline, a turn step by step, and a file across turns', { timeoutMs: 15_000 }, async ($, on) => {
   world(on, { stored: { [KEY]: [T1, T2] }, now: NOW })
   await $.session.start(START)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })

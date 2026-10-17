@@ -106,6 +106,8 @@ export type HistoryActions = {
   set: (v: HistoryView) => void
   /** Shows a path in the Files tab, selected. */
   reveal: (path: string) => void
+  /** Shows the file in the pane, at the page holding a line. */
+  view: (path: string, line: number | null) => void
   /** Quotes a step into the prompt box for the person to ask about. */
   ask: (step: Step, turn: Turn) => void
   /** Writes the project's whole history to a Markdown file. */
@@ -250,6 +252,7 @@ function stepper(
           ? <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}><Text bold>{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}</Button>
           : <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}>{step.rel}</Button>}
         <Button key="reveal" label="Show in Files" hotkey="o" dimColor onPress={() => actions.reveal(step.path)} />
+        <Button key="view-file" label="View file" hotkey="v" dimColor onPress={() => actions.view(step.path, step.line)} />
       </Box>
       <Box key="meta" flexDirection="row" flexWrap="wrap" gap={2}>
         <Text dimColor>{step.tool}{step.note ? ` · ${step.note}` : ''}{step.line !== null ? ` · line ${step.line}` : ''}{view.file !== null ? ` · ${formatAt(turn.at, now)}` : ''}</Text>

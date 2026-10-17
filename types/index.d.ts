@@ -77,6 +77,12 @@ export type SearchIndex = { files: string[]; complete: boolean }
 /** How Claude touched a path just now. */
 export type Tone = 'read' | 'write' | 'commit'
 
+/**
+ * A file shown in the pane in place of the tree, a page at a time: the page's text and
+ * the file's line count once read, or why it is not shown.
+ */
+export type Preview = { path: string; page: number; source?: string; total?: number; reason?: 'binary' | 'large' | 'missing' }
+
 /** What a git action does, which picks its colour in the bar. */
 export type GitActionKind = 'save' | 'sync' | 'fetch' | 'branch' | 'merge' | 'stash'
 
@@ -118,6 +124,8 @@ declare module 'claude-code' {
       index: SearchIndex | null
       /** The last git actions run through Bash, newest last: running, then done or failed, until newer ones push them out. */
       actions: GitActionEntry[]
+      /** The file shown in place of the tree, or null for the tree. */
+      preview: Preview | null
     }
   }
 }

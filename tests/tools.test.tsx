@@ -72,24 +72,24 @@ test('⊟ closes every folder; ⌖ shows only with a selection and opens the tre
   await ui.unmount()
 })
 
-test('a double-click on a file opens it in its default app; on a folder the second click is let be', async ($, on) => {
+test('a double-click on a file shows it in the pane; on a folder the second click is let be', async ($, on) => {
   const { clock, ran } = world(on, { dirs: DIRS })
   await $.session.start(START)
   await clock.settle()
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
-  await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: README })
-  await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: README })
-  await clock.settle()
-  expect(ran.at(-1)).toEqual(['cmd', '/c', 'start', '', 'C:\\work\\demo\\README.md'])
-  // The first click selected it, as a single click does.
-  expect(await rowText(ui, README)).toMatch(/README\.md/)
-
+  // A folder first: the second click is let be, so it stays open, and nothing is run.
   const before = ran.length
   await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: SRC })
   await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: SRC })
   await clock.settle()
-  // Opened by the first click, not closed again by the second; nothing run.
   expect(await rowText(ui, SRC)).toMatch(/^▾/)
+  expect(ran.slice(before).filter(a => a[0] === 'cmd')).toEqual([])
+
+  // Then a file: shown in the pane in place of the tree, nothing run (↗ opens the default app).
+  await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: README })
+  await ui.pointer({ type: 'down', x: 3, y: 0, button: 'left', in: README })
+  await clock.settle()
+  expect(await ui.find({ key: 'preview' })).toBeDefined()
   expect(ran.slice(before).filter(a => a[0] === 'cmd')).toEqual([])
   await ui.unmount()
 })

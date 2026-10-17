@@ -18,7 +18,8 @@ paint on the desktop, with the press taken from onPointer and sent to the hooks
 module by post. filetrail draws one Client per row and keeps its own row model.
 The shimmer's band and palettes, the git verbs and tones of the git bar
 (hooks/git-actions.ts), the tree's look on the desktop, its header buttons and
-its double-click and right-click on a row follow the same mod.
+its double-click and right-click on a row, and showing a file in the pane
+(hooks/preview.tsx) follow the same mod.
 
   claude-code-filetree, Copyright (c) 2026 Kurt Buhler. MIT License.
   https://github.com/data-goblin/claude-code-filetree

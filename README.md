@@ -16,7 +16,7 @@ A file tree and a history of Claude's edits in one pane for Claude Code, with Fi
 - The search box finds files by name across the project (git's file list in a repo, a walk of the folders otherwise, skipping `node_modules` and the like): names that start with the text first, then names that contain it, then paths. The results replace the tree; picking one opens the tree to it, selected. ✕ goes back to the tree.
 - Selecting a file shows `Claude sees: <file>` under the header: every prompt you send then carries one line naming the file, so "this file" means it, until ✕ clears the selection. Beside it: History (N) opens its history, Open opens it in the machine's default app, and Copy path and Copy full path put its path from the project root, or whole, on the clipboard.
 - `@path` in a prompt that names a file of the project opens the tree to it and selects it.
-- Double-click a file to open it in its default app (a folder only opens and closes); right-click a row to copy its path from the project root, or with shift held its whole path.
+- Double-click a file to show it in the pane in place of the tree: Markdown rendered as Claude's replies are, code highlighted with line numbers, 400 lines a page with `◀ ▶` for a longer file. `← files` goes back to the tree as you left it, `↗` (or Open) opens it in its default app. A binary file or one over 2 MB is not shown. When Claude edits the file on show, it is read again. A folder only opens and closes on a double-click. Right-click a row to copy its path from the project root, or with shift held its whole path.
 - Buttons beside the folder name: `↻` lists the open folders and reads git again, `◉`/`○` shows or hides dotfiles, `⊟` closes every folder, and `⌖` (with a file selected) opens the tree back to it. Hovering an icon says what it does, beside the icons (a desktop button has no tooltip of its own).
 - In a narrow pane a row never wraps: the name is cut with `…` first, then the counts after it give way; the `· reading` word always stays.
 
@@ -28,7 +28,7 @@ A file tree and a history of Claude's edits in one pane for Claude Code, with Fi
 - Open a turn to step through its edits one diff at a time: a strip of numbered cells, Prev and Next, the file, the tool, the line where the change starts, `+N -N`, and a diff with line numbers. Refused and failed edits are marked. A diff longer than 20 lines folds there with a Show all button; moving to another edit folds it again.
 - The layout follows the pane's width. Diff lines wrap rather than being cut, keeping their indentation. Below about 56 columns a path shows its file name first with the folder dimmed after it, and titles take up to two lines. From about 100 columns History splits in two: the turn list on the left and, on the right, the turn picked there (the latest until you pick one).
 - Only files inside the project folder are recorded; an edit elsewhere (a temporary file, a config file in your home folder) is left out.
-- Click a file name to see that file's edits across every turn. Show in Files takes you to it in the tree.
+- Click a file name to see that file's edits across every turn. Show in Files takes you to it in the tree; View file (`v`) shows the file in the pane at the page holding the edited line, as it is now.
 - Ask Claude puts the step (file, turn and diff, up to 40 lines) after whatever is in the prompt box, so you can type a question and send it yourself.
 - Export writes the project's whole history as Markdown to `~/.claude/filetrail/exports/<project>-<YYYYMMDD-HHMM>.md`.
 - The history is kept across sessions, per project: the last 50 turns of each, at most 3 MiB for all projects together (the least recently used project goes first), and up to 200 diff lines per edit (the counts still cover the whole change).
@@ -62,6 +62,7 @@ While the pane has the keyboard:
 | `b` | Back to the timeline |
 | `t` | From a file's history to the turn of the edit on show |
 | `o` | Show the edit's file in Files |
+| `v` | View the edit's file in the pane, at its line |
 | `a` | Ask Claude about the edit on show |
 | `s` | Show all, or show fewer, lines of a long diff |
 | `c`, Escape | Close the pane (Escape when it was opened by Replay) |
