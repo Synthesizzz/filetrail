@@ -27,6 +27,15 @@ test('a turn saves each edit with how it ended, under the project key', async ($
   expect(history.at(-1)?.length).toBe(1)
 })
 
+test('an edit outside the project is not recorded and leaves no turn', async ($, on) => {
+  const { store } = world(on)
+  await $.session.start(START)
+  await $.turn.start({ text: 'write the commit message', turnId: 't1' })
+  await $.tool.call({ tool: 'Write' as const, file_path: 'C:\\Users\\me\\AppData\\Local\\Temp\\msg.txt', content: 'feat: x\n' })
+  await $.turn.complete({ ...DONE, turnId: 't1' })
+  expect(store.get(KEY)).toBeUndefined()
+})
+
 test('turns without edits and subagent completions add nothing', async ($, on) => {
   const { store } = world(on)
   await $.session.start(START)

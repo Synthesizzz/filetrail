@@ -65,7 +65,8 @@ test('a Write lights up once it went through; a denied one does not', async ($, 
   await $.tool.call({ tool: 'Edit', file_path: 'C:\\work\\demo\\src\\denied.ts', old_string: 'a', new_string: 'b' })
   await clock.settle()
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
-  expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toMatch(/README\.md · writing$/)
+  // The running turn's edits count at once (●1), before the turn is saved.
+  expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toMatch(/README\.md · writing ●1$/)
   expect(await ui.find({ type: 'Text', text: /writing/ })).toBeDefined()
   expect((await ui.findAll({ type: 'Text', text: / · writing$/ })).length).toBe(1)
   await ui.unmount()
@@ -101,7 +102,7 @@ test('Files to History and back: a file\'s history, then Show in Files', async (
   await ui.press({ key: rowKey('C:/work/demo/src/a.ts') })
   expect(await rowText(ui, 'file-history')).toBe('History (2)')
   await ui.press({ key: 'file-history' })
-  expect(await ui.find({ type: 'Text', text: 'src/a.ts · 2 edits across 1 turn(s)' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'src/a.ts · 2 edits across 1 turn' })).toBeDefined()
 
   // Close src, then come back to the file from History: the tree opens to it, selected.
   await ui.press({ key: 'tab-files' })

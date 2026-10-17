@@ -29,6 +29,12 @@ const files = atom({ plugin: 'filetrail', key: 'files' } as const, { expanded: [
 const flash = atom({ plugin: 'filetrail', key: 'flash' } as const, {} as Record<string, Tone>)
 const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone } | null)
 const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | null)
+const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | null)
+
+/** The saved turns, and the running one after them while it has edits and is not saved yet. */
+function withLive(turns: readonly Turn[], now: Turn | null): readonly Turn[] {
+  return now && !turns.some(t => t.id === now.id) ? [...turns, now] : turns
+}
 
 // The project whose history this session records: the cwd at session start.
 let root = ''
@@ -150,6 +156,13 @@ async function loadHistory($: EngineInterface) {
   await update($, history, () => (Array.isArray(saved) ? (saved as Turn[]) : []))
 }
 
+/** Shows the running turn as it stands: a copy, since its steps change as the tools answer. */
+async function showLive($: EngineInterface) {
+  const now = pending
+  if (!now || !now.steps.length) return
+  await update($, live, () => ({ ...now, steps: now.steps.map(s => ({ ...s })) }))
+}
+
 /** Adds a finished turn to the project's history and keeps every project inside the store's budget. */
 async function saveTurn($: EngineInterface, turn: Turn) {
   const key = projectKey(root)
@@ -234,6 +247,8 @@ export const register: Register = on => {
     const r = await next(e)
     await $.command.register({ name: 'trail', description: 'Show the filetrail pane (file tree and edit history); args: replay, export, clear' })
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
+    // A reload forgets the running turn's steps, so a Now row left in state would never be saved.
+    await update($, live, () => null)
     await listDir($, root)
     scheduleGit($)
     void openPane($)
@@ -267,12 +282,14 @@ export const register: Register = on => {
       pending ??= { id: `t${at}`, at, prompt: '', steps: [] }
       steps = stepsFor(call, before, root, at, `${pending.id}.${callCount++}`)
       pending.steps.push(...steps)
+      if (steps.length) await showLive($)
     } catch (err) {
       $.ui.log(`filetrail: an edit was not recorded: ${String(err)}`)
     }
     const r = await next(e)
     const status = outcomeOf(r)
     for (const s of steps) s.status = status
+    if (steps.length) await showLive($).catch(err => $.ui.log(`filetrail: the live turn did not update: ${String(err)}`))
     if (status === 'ok' && steps[0]) {
       // A Write may add a file: list its folder again if it is on show.
       const dir = lower(parentOf(steps[0].path))
@@ -297,6 +314,8 @@ export const register: Register = on => {
       // The band offers this turn until it is replayed or another turn changes files.
       await update($, hint, () => hintFor(turn))
     }
+    // Saved now (or it changed nothing): the timeline's Now row gives way to the saved turn.
+    await update($, live, () => null)
     // Bash may have changed files too: list the open folders and read git again.
     await relist($)
     scheduleGit($)
@@ -367,6 +386,8 @@ export const register: Register = on => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button } = els
     const current = await read($, tab)
+    const running = await read($, live)
+    const turnsAll = withLive(await read($, history), running)
     const go = (to: Tab) => () => void update($, tab, () => to)
 
     return (
@@ -381,7 +402,7 @@ export const register: Register = on => {
         </Box>
         <Box key="body" flexDirection="column" marginTop={1}>
           {current === 'files'
-            ? filesView(els, root, await read($, listing), await read($, files), await read($, git), await read($, history), await read($, flash), await read($, last), {
+            ? filesView(els, root, await read($, listing), await read($, files), await read($, git), turnsAll, await read($, flash), await read($, last), {
                 toggle: dir => fire($, 'opening a folder', async () => {
                   const k = lower(dir.path)
                   const isOpen = (await read($, files)).expanded.includes(k)
@@ -394,7 +415,7 @@ export const register: Register = on => {
                   await update($, tab, () => 'history')
                 }),
               })
-            : historyView(els, await read($, history), await read($, view), {
+            : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),
                 exportAll: () => fire($, 'exporting', async () => $.ui.toast(await exportHistory($))),
@@ -403,7 +424,7 @@ export const register: Register = on => {
                   await update($, tab, () => 'files')
                   await reveal($, path, true)
                 }),
-              }, await $.clock.now(), e.props.bodyColumns)}
+              }, await $.clock.now(), e.props.bodyColumns, running?.id ?? null)}
         </Box>
       </Box>
     )

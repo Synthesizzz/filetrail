@@ -64,13 +64,20 @@ function step(base: Omit<Step, 'add' | 'del' | 'diff' | 'status'>, oldText: stri
   return { ...base, status: 'pending', add, del, diff: capDiff(full, MAX_STEP_LINES) }
 }
 
+/** Whether `path` sits under `root`; with no root known, everything counts as inside. */
+export function isInside(root: string, path: string): boolean {
+  return !root || relTo(root, path) !== normPath(path)
+}
+
 /**
  * The steps one edit call makes. `before` is the file's text before the call,
- * null when the file did not exist or could not be read.
+ * null when the file did not exist or could not be read. A file outside the
+ * project makes none: the history is the project's.
  */
 export function stepsFor(call: EditCall, before: string | null, root: string, at: number, idBase: string): Step[] {
   if (!EDIT_TOOLS.has(call.tool) || !call.file_path) return []
   const path = normPath(call.file_path)
+  if (!isInside(root, path)) return []
   const rel = relTo(root, path)
   if (call.tool === 'Edit') {
     return [step({

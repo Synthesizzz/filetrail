@@ -88,6 +88,8 @@ declare module 'claude-code' {
       last: { path: string; tone: Tone } | null
       /** What the band above the prompt offers to replay; null once replayed or before any edit. */
       hint: Hint | null
+      /** The turn running now, while it has edits: shown as "Now" on the timeline until it is saved. */
+      live: Turn | null
     }
   }
 }

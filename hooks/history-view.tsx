@@ -4,7 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { DiffLine, HistoryView, Step, Turn } from '../types'
-import { NBSP } from './files-view'
+import { clip, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS } from './paths'
 
 type Els = ReturnType<EngineInterface['ui']['resolve']>
 
@@ -68,24 +68,41 @@ export function gutter(diff: readonly DiffLine[], start: number | null): string[
   })
 }
 
-export function statusLabel(step: Step): string {
-  return step.status === 'ok' ? '' : step.status === 'pending' ? 'no answer' : step.status
+/** '' for an applied step; a step with no answer yet is still running while its turn is live. */
+export function statusLabel(step: Step, isLive = false): string {
+  if (step.status === 'ok') return ''
+  if (step.status === 'pending') return isLive ? 'running…' : 'no answer'
+  return step.status
+}
+
+/** A turn's title: "Now" while it runs, its time once saved. */
+export function turnTitle(turn: Turn, now: number, liveId: string | null): string {
+  return `${turn.id === liveId ? 'Now' : formatAt(turn.at, now)}  ${turn.prompt || '(no prompt)'}`
 }
 
 /** Diff lines a step shows before Show all; a longer diff folds there (Replay Theater kept 12). */
 export const FOLD_LINES = 20
 
-function diffRows(els: Els, step: Step, width: number, max = Infinity) {
+/**
+ * One diff line as drawn: the gutter and mark in non-breaking spaces so they keep
+ * their columns, the code with its indentation kept but free to wrap at single spaces.
+ * (Every space non-breaking cut long lines off in a narrow dock; plain spaces lose
+ * the indentation, which the desktop collapses.)
+ */
+export function diffLineText(l: DiffLine, num: string, gutterWidth: number): string {
+  const mark = l.op === '~' ? ' ' : l.op
+  const prefix = `${gutterWidth ? num.padStart(gutterWidth) + ' ' : ''}${mark} `.replace(/ /g, NBSP)
+  return prefix + keepIndent(l.t)
+}
+
+function diffRows(els: Els, step: Step, max = Infinity) {
   const { Text } = els
   if (!step.diff.length) return [<Text dimColor>  (no line changes)</Text>]
   const nums = gutter(step.diff, step.line)
   const w = Math.max(0, ...nums.map(n => n.length))
   return step.diff.slice(0, max).map((l, k) => {
     const color = l.op === '+' ? 'success' : l.op === '-' ? 'error' : undefined
-    const mark = l.op === '~' ? ' ' : l.op
-    // Non-breaking spaces: the desktop collapses runs of plain ones, which would flatten the code's indentation.
-    const line = `${w ? nums[k]!.padStart(w) + ' ' : ''}${mark} ${l.t}`.slice(0, Math.max(20, width)).replace(/ /g, NBSP)
-    return <Text mono wrap="truncate-end" dimColor={l.op === ' ' || l.op === '~'} {...(color ? { color } : {})}>{line}</Text>
+    return <Text mono wrap="wrap" dimColor={l.op === ' ' || l.op === '~'} {...(color ? { color } : {})}>{diffLineText(l, nums[k]!, w)}</Text>
   })
 }
 
@@ -101,9 +118,21 @@ export type HistoryActions = {
   close: () => void
 }
 
-function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now: number) {
+/** How History fits the pane: narrow (filename-first, shorter titles), normal, or wide (list and diff side by side). */
+export type Layout = { width: number; narrow: boolean; wide: boolean }
+
+export function layoutFor(width: number): Layout {
+  return { width, narrow: width < NARROW_COLUMNS, wide: width >= WIDE_COLUMNS }
+}
+
+type ListOptions = { selected: string | null; width: number; narrow: boolean }
+
+function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now: number, liveId: string | null, opts: ListOptions) {
   const { Box, Text, Button } = els
   const { set } = actions
+  const saved = turns.filter(t => t.id !== liveId).length
+  // A title gets two lines of the column at most.
+  const title = (turn: Turn) => clip(turnTitle(turn, now, liveId), Math.max(24, opts.width * 2 - 4))
   if (!turns.length) {
     return (
       <Box key="timeline" flexDirection="column">
@@ -114,46 +143,62 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
   }
   return (
     <Box key="timeline" flexDirection="column">
-      <Box key="timeline-head" flexDirection="row" gap={1} marginBottom={1}>
-        <Text dimColor>{turns.length} turn{turns.length === 1 ? '' : 's'}</Text>
+      <Box key="timeline-head" flexDirection="row" flexWrap="wrap" gap={1} marginBottom={1}>
+        <Text dimColor>{saved} turn{saved === 1 ? '' : 's'}{liveId ? ' · 1 running' : ''}</Text>
         <Button key="export" label="Export" hotkey="e" dimColor onPress={() => actions.exportAll()} />
       </Box>
-      {[...turns].reverse().map(turn => (
-        <Box key={`row-${turn.id}`} flexDirection="column" marginBottom={1}>
-          <Button key={`turn-${turn.id}`} plain onPress={() => set({ turn: turn.id, file: null, step: 0 })}>
-            {formatAt(turn.at, now)}  {turn.prompt || '(no prompt)'}
-          </Button>
-          <Text dimColor>{summaryText(turn)}</Text>
-        </Box>
-      ))}
+      {[...turns].reverse().map(turn => {
+        const isLive = turn.id === liveId
+        const isSelected = turn.id === opts.selected
+        return (
+          <Box key={`row-${turn.id}`} flexDirection="column" marginBottom={1}>
+            <Button key={`turn-${turn.id}`} plain onPress={() => set({ turn: turn.id, file: null, step: 0 })}>
+              {isSelected ? '› ' : ''}
+              <Text wrap="wrap" {...(isLive ? { color: 'claude' as const } : {})} {...(isLive || isSelected ? { bold: true } : {})}>{title(turn)}</Text>
+            </Button>
+            <Text dimColor wrap="wrap">{isLive ? 'working · ' : ''}{summaryText(turn)}</Text>
+          </Box>
+        )
+      })}
     </Box>
   )
 }
 
-function stepper(els: Els, turns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, width: number) {
+function stepper(
+  els: Els, turns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, layout: Layout,
+  liveId: string | null,
+) {
   const { Box, Text, Button } = els
   const { set } = actions
   const steps = stepsOf(turns, view)
-  if (!steps.length) return timeline(els, turns, actions, now)
+  if (!steps.length) {
+    return layout.wide
+      ? <Text key="stepper-empty" dimColor>No edits in this turn.</Text>
+      : timeline(els, turns, actions, now, liveId, { selected: null, width: layout.width, narrow: layout.narrow })
+  }
   const k = Math.max(0, Math.min(view.step, steps.length - 1))
   const { step, turn } = steps[k]!
   // Another step folds its diff again.
   const go = (to: number) => set({ ...view, step: Math.max(0, Math.min(to, steps.length - 1)), full: false })
   const folds = step.diff.length > FOLD_LINES
-  const status = statusLabel(step)
+  const status = statusLabel(step, turn.id === liveId)
+  const fileTurns = new Set(steps.map(p => p.turn.id)).size
+  const fileName = layout.narrow ? splitPath(steps[0]!.step.rel).name : steps[0]!.step.rel
   const header = view.file !== null
-    ? `${steps[0]!.step.rel} · ${steps.length} edit${steps.length === 1 ? '' : 's'} across ${new Set(steps.map(p => p.turn.id)).size} turn(s)`
-    : `${formatAt(turn.at, now)}  ${turn.prompt || '(no prompt)'}`
+    ? `${fileName} · ${steps.length} edit${steps.length === 1 ? '' : 's'} across ${fileTurns} turn${fileTurns === 1 ? '' : 's'}`
+    : clip(turnTitle(turn, now, liveId), Math.max(24, layout.width * 2 - 4))
+  const { name, dir } = splitPath(step.rel)
 
   return (
     <Box key="stepper" flexDirection="column">
       {/* Rows of buttons wrap: a docked pane is narrow, and a row that does not cut its last button off (seen live: Close). */}
       <Box key="nav-top" flexDirection="row" flexWrap="wrap" gap={1}>
-        <Button key="back" label="◀ Timeline" hotkey="b" dimColor onPress={() => set(TIMELINE)} />
+        {/* Side by side the turn list is on show, so there is nothing to go back to. */}
+        {!layout.wide && <Button key="back" label="◀ Timeline" hotkey="b" dimColor onPress={() => set(TIMELINE)} />}
         {view.file !== null && <Button key="to-turn" label="This turn" hotkey="t" dimColor onPress={() => set({ turn: turn.id, file: null, step: turn.steps.indexOf(step) })} />}
         <Button key="close" label="Close" hotkey="c" role="dismiss" dimColor onPress={() => actions.close()} />
       </Box>
-      <Text bold wrap="truncate-end">{header}</Text>
+      <Text bold wrap="wrap">{header}</Text>
       <Box key="strip" flexDirection="row" flexWrap="wrap" gap={0}>
         {steps.map((_, n) => (
           <Button key={`cell-${n}`} plain {...(n === k ? {} : { dimColor: true })} onPress={() => go(n)}>{n === k ? `[${n + 1}]` : ` ${n + 1} `}</Button>
@@ -161,17 +206,20 @@ function stepper(els: Els, turns: readonly Turn[], view: HistoryView, actions: H
       </Box>
       <Text bold>step {k + 1} of {steps.length}</Text>
       <Box key="file-row" flexDirection="row" flexWrap="wrap" gap={2}>
-        <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}>{step.rel}</Button>
+        {/* Narrow, the file name leads: a path cut at the end loses the part that matters. */}
+        {layout.narrow
+          ? <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}><Text bold>{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}</Button>
+          : <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}>{step.rel}</Button>}
         <Button key="reveal" label="Show in Files" hotkey="o" dimColor onPress={() => actions.reveal(step.path)} />
       </Box>
-      <Box key="meta" flexDirection="row" gap={2}>
+      <Box key="meta" flexDirection="row" flexWrap="wrap" gap={2}>
         <Text dimColor>{step.tool}{step.note ? ` · ${step.note}` : ''}{step.line !== null ? ` · line ${step.line}` : ''}{view.file !== null ? ` · ${formatAt(turn.at, now)}` : ''}</Text>
         <Text color="success">+{step.add}</Text>
         <Text color="error">-{step.del}</Text>
         {status ? <Text color={step.status === 'denied' ? 'error' : 'warning'}>{status}</Text> : null}
       </Box>
       <Box key="diff" flexDirection="column" marginTop={1}>
-        {diffRows(els, step, width, folds && !view.full ? FOLD_LINES : Infinity)}
+        {diffRows(els, step, folds && !view.full ? FOLD_LINES : Infinity)}
         {folds && !view.full && <Button key="show-all" label={`Show all (${step.diff.length - FOLD_LINES} more lines)`} hotkey="s" dimColor onPress={() => set({ ...view, step: k, full: true })} />}
         {folds && view.full && <Button key="show-fewer" label="Show fewer" hotkey="s" dimColor onPress={() => set({ ...view, step: k, full: false })} />}
       </Box>
@@ -185,9 +233,39 @@ function stepper(els: Els, turns: readonly Turn[], view: HistoryView, actions: H
   )
 }
 
-/** The History tab's body for the view on show. */
-export function historyView(els: Els, turns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, width: number) {
-  return view.turn === null && view.file === null
-    ? timeline(els, turns, actions, now)
-    : stepper(els, turns, view, actions, now, width)
+/** Share of a wide pane the turn list takes; the diff has the rest. */
+export const LIST_SHARE = 0.34
+
+/**
+ * The History tab's body. Narrow or normal: the timeline, or one turn's (or file's)
+ * steps. Wide: both at once, the turn list on the left and on the right the turn
+ * picked there, the latest one until something is picked.
+ */
+export function historyView(
+  els: Els, turns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, width: number,
+  liveId: string | null = null,
+) {
+  const layout = layoutFor(width)
+  const isTimeline = view.turn === null && view.file === null
+  if (!layout.wide) {
+    return isTimeline
+      ? timeline(els, turns, actions, now, liveId, { selected: null, width, narrow: layout.narrow })
+      : stepper(els, turns, view, actions, now, layout, liveId)
+  }
+  const { Box, Text } = els
+  const latest = turns.at(-1)?.id ?? null
+  const shown: HistoryView = isTimeline && latest ? { turn: latest, file: null, step: 0 } : view
+  const listWidth = Math.floor(width * LIST_SHARE)
+  return (
+    <Box key="wide" flexDirection="row" gap={2}>
+      <Box key="wide-list" width={`${Math.round(LIST_SHARE * 100)}%`} flexDirection="column">
+        {timeline(els, turns, actions, now, liveId, { selected: shown.file === null ? shown.turn : null, width: listWidth, narrow: listWidth < NARROW_COLUMNS })}
+      </Box>
+      <Box key="wide-step" flexGrow={1} flexDirection="column">
+        {turns.length
+          ? stepper(els, turns, shown, actions, now, { ...layout, width: width - listWidth - 2 }, liveId)
+          : <Text dimColor>Pick a turn on the left.</Text>}
+      </Box>
+    </Box>
+  )
 }

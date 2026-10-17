@@ -44,8 +44,11 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   on('store.set', (_$: any, e: any) => { store.set(e.key, JSON.parse(JSON.stringify(e.value))); return { value: undefined } })
   on('store.delete', (_$: any, e: any) => { store.delete(e.key); return { value: undefined } })
   const history: Turn[][] = []
+  // Every value the mod writes, in order, by key (the test `$` cannot read state back).
+  const states: Record<string, unknown[]> = {}
   on('state.set', (_$: any, e: any, next: any) => {
     if (e.key === 'history') history.push(e.value)
+    ;(states[e.key] ??= []).push(JSON.parse(JSON.stringify(e.value ?? null)))
     return next(e)
   })
   const clock = mock.clock(on, { now })
@@ -94,7 +97,7 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     logs.push(String(e.text))
     return { value: undefined }
   })
-  return { history, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes }
+  return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes }
 }
 
 /** Text with the non-breaking spaces the mod draws (indents, diff lines) read as plain ones. */

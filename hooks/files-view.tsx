@@ -6,12 +6,11 @@ import type { EngineInterface } from 'claude-code'
 import type { Entry, FilesView, GitInfo, Tone, Turn } from '../types'
 import { dirStatus, fileStatus, lineCounts } from './git'
 import { relTo } from './history'
+import { NBSP } from './paths'
 import { editCounts, hasEditsBelow, lower, visibleRows } from './tree'
 
 type Els = ReturnType<EngineInterface['ui']['resolve']>
 
-/** A space no surface collapses or wraps at. */
-export const NBSP = ' '
 
 /** Rows drawn at most; a longer tree says how many it left out. */
 export const MAX_ROWS = 400

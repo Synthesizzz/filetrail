@@ -79,7 +79,7 @@ test('History: timeline, a turn step by step, and a file across turns', async ($
 
   // The file across turns, oldest first.
   await ui.press({ key: 'file-filter' })
-  expect(await ui.find({ type: 'Text', text: 'src/a.ts · 2 edits across 2 turn(s)' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'src/a.ts · 2 edits across 2 turns' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Write · new file/ })).toBeDefined()
   await ui.press({ key: 'to-turn' })
   expect(await ui.find({ type: 'Text', text: /add greet/ })).toBeDefined()

@@ -58,6 +58,14 @@ test('stepsFor: Edit, MultiEdit and Write', () => {
   expect(stepsFor({ tool: 'Read', file_path: '/w/a.ts' }, null, '/w', 1, 't')).toEqual([])
 })
 
+test('stepsFor skips files outside the project, but keeps everything when no root is known', () => {
+  const temp = { tool: 'Write', file_path: 'C:\\Users\\me\\AppData\\Local\\Temp\\msg.txt', content: 'x\n' }
+  expect(stepsFor(temp, null, 'C:\\work\\demo', 1, 't')).toEqual([])
+  expect(stepsFor({ ...temp, file_path: 'C:\\work\\demo-other\\a.ts' }, null, 'C:\\work\\demo', 1, 't')).toEqual([])
+  expect(stepsFor({ ...temp, file_path: 'c:\\WORK\\demo\\a.ts' }, null, 'C:\\work\\demo', 1, 't').length).toBe(1)
+  expect(stepsFor(temp, null, '', 1, 't').length).toBe(1)
+})
+
 test('a huge Write keeps 200 diff lines but counts them all', () => {
   const content = Array.from({ length: 300 }, (_, k) => `line ${k}`).join('\n')
   const [s] = stepsFor({ tool: 'Write', file_path: '/w/big.txt', content }, null, '/w', 1, 't')
