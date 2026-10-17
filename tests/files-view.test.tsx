@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Turn } from '../types'
-import { DONE, KEY, PANE, START, rowText, world } from './world'
+import { DONE, KEY, PANE, START, pressRow, rowRuns, rowText, textOf, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
   'C:\\work\\demo': [['src', 'dir'], ['.git', 'dir'], ['README.md', 'file'], ['tmp', 'dir']],
@@ -31,24 +31,29 @@ test('Files: the root listing, git status, line counts and edit badges', async (
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
 
   expect(await ui.find({ type: 'Text', text: '⎇ main ↑1' })).toBeDefined()
-  const rows = (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('row-'))
+  // Each tree row is a Client: its colours paint on the desktop, where a Button drops them.
+  const rows = (await ui.findAll({ type: 'Client' })).map(b => b.key).filter(k => k?.startsWith('row-'))
   expect(rows).toEqual(ROOT_ROWS.map(n => rowKey(`C:/work/demo/${n}`)))
   expect(ran.map(a => a[1])).toEqual(['rev-parse', 'status', 'diff'])
 
-  // A folder with a change beneath it, closed: Claude's edits show as a dot.
-  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ src\/ ●$/)
+  // A folder with a change beneath it, closed: Claude's edits show as a dot, git's changes
+  // as counts by kind; an untracked folder (git lists nothing inside it) keeps its letter.
+  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ src\/ ● M:1 \?:1$/)
+  const counts = await rowRuns(ui, rowKey('C:/work/demo/src'))
+  expect(counts.find(r => r.text === ' M:1')?.props.color).toBe('warning')
+  expect(counts.find(r => r.text === ' ?:1')?.props.color).toBe('success')
   expect(await rowText(ui, rowKey('C:/work/demo/tmp'))).toMatch(/^▸ tmp\/ \?$/)
 
   // Opening it lists it and shows each file's status, counts and edits.
-  await ui.press({ key: rowKey('C:/work/demo/src') })
+  await pressRow(ui, rowKey('C:/work/demo/src'))
   expect(await rowText(ui, rowKey('C:/work/demo/src/a.ts'))).toMatch(/^\s+a\.ts ●2 \+3 -1$/)
   expect(await rowText(ui, rowKey('C:/work/demo/src/new.ts'))).toMatch(/^\s+new\.ts \?$/)
-  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▾ src\/$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▾ src\/ M:1 \?:1$/)
   // The indent is non-breaking: the desktop collapses leading plain spaces (seen live: every row flush left).
-  expect((await ui.find({ key: rowKey('C:/work/demo/src/a.ts') }))?.text?.slice(0, 4)).toBe('\u00a0'.repeat(4))
+  expect(textOf(await ui.drawn({ in: rowKey('C:/work/demo/src/a.ts') })).slice(0, 4)).toBe('\u00a0'.repeat(4))
 
   // Closing hides its files again.
-  await ui.press({ key: rowKey('C:/work/demo/src') })
+  await pressRow(ui, rowKey('C:/work/demo/src'))
   expect(await ui.find({ key: rowKey('C:/work/demo/src/a.ts') })).toBeUndefined()
   await ui.unmount()
 })
@@ -72,7 +77,7 @@ test('a Write lists its folder again, so the new file shows', async ($, on) => {
   await $.session.start(START)
   await clock.advance(1000)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
-  await ui.press({ key: rowKey('C:/work/demo/src') })
+  await pressRow(ui, rowKey('C:/work/demo/src'))
   expect(await ui.find({ key: rowKey('C:/work/demo/src/b.ts') })).toBeUndefined()
 
   await $.turn.start({ text: 'add b', turnId: 't1' })
@@ -82,19 +87,36 @@ test('a Write lists its folder again, so the new file shows', async ($, on) => {
   await ui.unmount()
 })
 
+test('a click on a row\'s Client presses it; a right click and a hover do not', async ($, on) => {
+  const { clock } = world(on, { dirs: DIRS })
+  await $.session.start(START)
+  await clock.advance(1000)
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  const src = rowKey('C:/work/demo/src')
+  await ui.pointer({ type: 'enter', x: 2, y: 0, in: src })
+  await ui.pointer({ type: 'down', x: 2, y: 0, button: 'right', in: src })
+  expect(await rowText(ui, src)).toMatch(/^▸ src\//)
+  // Hovered, the name is underlined, as a Button's label would light.
+  expect((await rowRuns(ui, src)).find(r => r.text === 'src/')?.props.underline).toBe(true)
+  await ui.pointer({ type: 'down', x: 2, y: 0, button: 'left', in: src })
+  await clock.settle()
+  expect(await rowText(ui, src)).toMatch(/^▾ src\//)
+  await ui.unmount()
+})
+
 test('a file row can be selected, with a marker every surface shows', async ($, on) => {
   const { clock } = world(on, { dirs: DIRS })
   await $.session.start(START)
   await clock.advance(1000)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
-  await ui.press({ key: rowKey('C:/work/demo/README.md') })
+  await pressRow(ui, rowKey('C:/work/demo/README.md'))
   // The desktop draws no inverse: the marker and bold carry the selection there.
   expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toBe('› README.md')
   expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ src\//)
-  // Its row is drawn inverse, and the line under the header names it.
-  const names = (await ui.findAll({ type: 'Text' })).filter(t => t.text === 'README.md')
-  expect(names.some(t => t.props?.inverse === true)).toBe(true)
-  expect(names.length).toBe(2)
+  // Its name is bold and underlined in the row, and the line under the header names it.
+  const name = (await rowRuns(ui, rowKey('C:/work/demo/README.md'))).find(r => r.text === 'README.md')
+  expect(name?.props).toMatchObject({ bold: true, underline: true })
+  expect((await ui.findAll({ type: 'Text' })).filter(t => t.text === 'README.md').length).toBe(1)
   expect(await ui.find({ type: 'Text', text: '· no edits recorded' })).toBeDefined()
   await ui.unmount()
 })

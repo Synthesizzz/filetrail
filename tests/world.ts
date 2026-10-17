@@ -12,7 +12,7 @@ export const KEY = 'p:c:/work/demo'
 export const DONE = { durationMs: 1, isAborted: false, reason: 'answer', text: '', answer: '' } as const
 
 /** What `git` answers: the repo's top, `status --porcelain=v1 -b -z` and `diff --numstat HEAD`. */
-export type GitWorld = { top: string; status: string; numstat: string }
+export type GitWorld = { top: string; status: string; numstat: string; lsFiles?: string; show?: string }
 
 export type WorldOptions = {
   files?: Record<string, string>
@@ -66,6 +66,8 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   on('tool.call', (_$: any, e: any) => {
     if (String(e.file_path).endsWith('denied.ts')) return { deny: 'The user refused this edit.' }
     if (String(e.file_path).endsWith('broken.ts')) return { result: 'old_string not found', isError: true }
+    // A Bash command with "--fail" in it ends with an error, as a non-zero exit does.
+    if (e.tool === 'Bash' && String(e.command).includes('--fail')) return { result: 'exit 1', isError: true }
     return { result: 'ok' }
   })
   const listed = Object.fromEntries(Object.entries(dirs).map(([d, kids]) => [key(d), kids]))
@@ -81,10 +83,15 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     const argv: string[] = e.argv
     ran.push(argv)
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-    if (argv[0] !== 'git' || !git) return out('', 128)
+    // Openers (cmd /c start, open, xdg-open) succeed; uname says Linux.
+    if (argv[0] === 'uname') return out('Linux\n')
+    if (argv[0] !== 'git') return out('')
+    if (!git) return out('', 128)
     if (argv[1] === 'rev-parse') return out(`${git.top}\n`)
     if (argv[1] === 'status') return out(git.status)
     if (argv[1] === 'diff') return out(git.numstat)
+    if (argv[1] === 'ls-files') return out(git.lsFiles ?? '')
+    if (argv[1] === 'show') return out(git.show ?? '')
     return out('', 1)
   })
   const scrolls: unknown[] = []
@@ -97,7 +104,13 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     logs.push(String(e.text))
     return { value: undefined }
   })
-  return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes }
+  const copies: { text: string; surface?: string }[] = []
+  // ui.copy takes { value }, unlike ui.scroll and prompt.fill, which take their result bare.
+  on('ui.copy', (_$: any, e: any) => {
+    copies.push({ text: e.text, surface: e.surface })
+    return { value: { isCopied: true } }
+  })
+  return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes, copies }
 }
 
 /** Text with the non-breaking spaces the mod draws (indents, diff lines) read as plain ones. */
@@ -105,7 +118,31 @@ export const plain = (text: string | undefined) => (text ?? '').replace(/ /g, '
 
 /** The text of the element drawn under `key`, spaces plain; '' when it is not drawn. */
 export async function rowText(ui: any, key: string): Promise<string> {
-  return plain((await ui.find({ key }))?.text)
+  const el = await ui.find({ key })
+  if (el?.type === 'Client') return plain(textOf(await ui.drawn({ in: key })))
+  return plain(el?.text)
+}
+
+/** All the text in a drawn tree, in order (a Client's module tree, read through `drawn`). */
+export function textOf(node: any): string {
+  if (node == null || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  return textOf(node.props?.children ?? node.children)
+}
+
+/** The Text runs a row's Client drew, with their props: colours and styles under test. */
+export async function rowRuns(ui: any, key: string): Promise<{ text: string; props: any }[]> {
+  const out: { text: string; props: any }[] = []
+  const walk = (n: any) => {
+    if (n == null || typeof n !== 'object') return
+    if (Array.isArray(n)) return n.forEach(walk)
+    // Every Text, outer ones first: a wrapped title is one Text holding its runs.
+    if (n.type === 'Text') out.push({ text: plain(textOf(n)), props: n.props ?? {} })
+    walk(n.props?.children ?? n.children)
+  }
+  walk(await ui.drawn({ in: key }))
+  return out
 }
 
 /** Whether a Text reading `text` (spaces plain) is drawn. */
@@ -125,3 +162,8 @@ export const PANE = {
     view: {},
   },
 } as const
+
+/** Presses a tree row as its Client does: a post from that row's instance. */
+export async function pressRow(ui: any, key: string): Promise<void> {
+  await ui.post({ press: true }, { in: key })
+}

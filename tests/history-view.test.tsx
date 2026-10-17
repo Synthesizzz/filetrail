@@ -2,8 +2,9 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Step, Turn } from '../types'
 import { stepsFor } from '../hooks/history'
-import { formatAt, gutter, stepsOf, summaryText } from '../hooks/history-view'
-import { KEY, PANE, START, hasText, rowText, world } from './world'
+import { TONE_SHIMMER } from '../hooks/files-view'
+import { formatAt, gutter, stepsOf, summaryText, TIME_COLOR, titleSegs } from '../hooks/history-view'
+import { KEY, PANE, START, hasText, pressRow, rowRuns, rowText, world } from './world'
 
 const ROOT = 'C:\\work\\demo'
 // Built from local time parts, so the expected clock text holds in any timezone.
@@ -26,6 +27,18 @@ const T2: Turn = {
     ...made(stepsFor({ tool: 'Edit', file_path: `${ROOT}\\src\\denied.ts`, old_string: 'greet', new_string: 'welcome' }, 'greet\n', ROOT, TODAY, 't2.1'), 'denied'),
   ],
 }
+
+test('titleSegs: marker when selected, time in blue, "Now" shimmering while live, prompt cut to the budget', () => {
+  const saved = titleSegs(T2, NOW, null, false, 200)
+  expect(saved.map(s => s.t.replace(/ /g, ' '))).toEqual(['17:00', '  rename greet to welcome'])
+  expect(saved[0]!.c).toBe(TIME_COLOR)
+  const live = titleSegs(T2, NOW, 't2', true, 200)
+  expect(live[0]).toMatchObject({ t: '› ', c: 'claude' })
+  expect(live[1]).toMatchObject({ t: 'Now', c: 'claude', sh: TONE_SHIMMER.write })
+  expect(live[2]!.b).toBe(true)
+  const cut = titleSegs(T2, NOW, null, false, 24)
+  expect(cut.map(s => s.t).join('').length).toBeLessThanOrEqual(24)
+})
 
 test('formatAt: clock today, month and day otherwise', () => {
   expect(formatAt(TODAY, NOW)).toBe('17:00')
@@ -55,14 +68,21 @@ test('History: timeline, a turn step by step, and a file across turns', async ($
   await ui.press({ key: 'tab-history' })
 
   // The timeline, newest first.
-  const rows = (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('turn-'))
+  const rows = (await ui.findAll({ type: 'Client' })).map(b => b.key).filter(k => k?.startsWith('turn-'))
   expect(rows).toEqual(['turn-t2', 'turn-t1'])
   expect(await rowText(ui, 'turn-t2')).toMatch(/^17:00\s+rename greet to welcome$/)
   expect(await rowText(ui, 'turn-t1')).toMatch(/^Oct 16 10:00\s+add greet$/)
   expect(await ui.find({ type: 'Text', text: '2 files · 2 edits · +2 -2 · 1 not applied' })).toBeDefined()
+  // Colour, which a Button would drop: the time in blue in the row's Client, the counts in the summary.
+  expect((await rowRuns(ui, 'turn-t2')).find(r => r.text === '17:00')?.props.color).toBe(TIME_COLOR)
+  // A text query matches within longer texts too, so take the run that reads exactly so.
+  const run = async (text: string) => (await ui.findAll({ type: 'Text', text })).find(t => t.text === text)?.props?.color
+  expect(await run('+2')).toBe('success')
+  expect(await run('-2')).toBe('error')
+  expect(await run(' · 1 not applied')).toBe('warning')
 
   // One turn, step by step.
-  await ui.press({ key: 'turn-t2' })
+  await pressRow(ui, 'turn-t2')
   expect(await ui.find({ type: 'Text', text: /step 1 of 2/ })).toBeDefined()
   expect(await rowText(ui, 'file-filter')).toBe('src/a.ts')
   expect(await hasText(ui, '2 - greet')).toBe(true)
@@ -87,7 +107,7 @@ test('History: timeline, a turn step by step, and a file across turns', async ($
   // Back to the timeline; the Files tab and back keep the place.
   await ui.press({ key: 'back' })
   expect(await ui.find({ key: 'turn-t1' })).toBeDefined()
-  await ui.press({ key: 'turn-t1' })
+  await pressRow(ui, 'turn-t1')
   await ui.press({ key: 'tab-files' })
   await ui.press({ key: 'tab-history' })
   expect(await ui.find({ type: 'Text', text: /add greet/ })).toBeDefined()
@@ -99,7 +119,7 @@ test('History draws on the terminal too', async ($, on) => {
   await $.session.start(START)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'terminal', ...PANE })
   await ui.press({ key: 'tab-history' })
-  await ui.press({ key: 'turn-t2' })
+  await pressRow(ui, 'turn-t2')
   expect(await hasText(ui, '2 + welcome')).toBe(true)
   await ui.unmount()
 })

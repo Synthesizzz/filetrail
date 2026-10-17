@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Step, Turn } from '../types'
 import { diffLineText, layoutFor } from '../hooks/history-view'
 import { clip, keepIndent, NBSP, splitPath } from '../hooks/paths'
-import { KEY, PANE, START, hasText, plain, rowText, world } from './world'
+import { KEY, PANE, START, hasText, plain, rowText, world, pressRow } from './world'
 
 const AT = new Date(2026, 9, 17, 17, 5).getTime()
 const step = (id: string, rel: string, over: Partial<Step> = {}): Step => ({
@@ -36,7 +36,7 @@ test('narrow: the file name leads, its folder dimmed after it', async ($, on) =>
   await $.session.start(START)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...at(40) })
   await ui.press({ key: 'tab-history' })
-  await ui.press({ key: 'turn-t1' })
+  await pressRow(ui, 'turn-t1')
   expect(await rowText(ui, 'file-filter')).toBe('a.ts src/lib')
   expect(await hasText(ui, '3 - return greet(name)'.replace('- ', '-     '))).toBe(true)
   expect(await ui.find({ key: 'back' })).toBeDefined()
@@ -50,7 +50,7 @@ test('normal width keeps the whole path and one page at a time', async ($, on) =
   await ui.press({ key: 'tab-history' })
   // One page at a time: the timeline alone, no step on show until a turn is opened.
   expect(await hasText(ui, 'step 1 of 2')).toBe(false)
-  await ui.press({ key: 'turn-t1' })
+  await pressRow(ui, 'turn-t1')
   expect(await rowText(ui, 'file-filter')).toBe('src/lib/a.ts')
   expect(await ui.find({ key: 'turn-t2' })).toBeUndefined()
   await ui.unmount()
@@ -68,13 +68,13 @@ test('wide: the turn list and the latest turn side by side; picking a turn on th
   expect(await rowText(ui, 'turn-t2')).toMatch(/^› /)
   expect(await ui.find({ key: 'back' })).toBeUndefined()
 
-  await ui.press({ key: 'turn-t1' })
+  await pressRow(ui, 'turn-t1')
   expect(await hasText(ui, 'step 1 of 1')).toBe(true)
   expect(await rowText(ui, 'turn-t1')).toMatch(/^› /)
   expect(await ui.find({ key: 'turn-t2' })).toBeDefined()
 
   // Stepping on the right keeps the list.
-  await ui.press({ key: 'turn-t2' })
+  await pressRow(ui, 'turn-t2')
   await ui.press({ key: 'next' })
   expect(await hasText(ui, 'step 2 of 2')).toBe(true)
   expect(plain((await ui.find({ key: 'file-filter' }))?.text)).toBe('README.md')

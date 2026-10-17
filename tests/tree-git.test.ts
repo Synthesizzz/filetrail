@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { GitInfo, Turn } from '../types'
-import { codeOf, dirStatus, fileStatus, lineCounts, parseBranch, parseNumstat, parseStatus } from '../hooks/git'
+import { codeOf, dirCounts, dirStatus, fileStatus, lineCounts, parseBranch, parseNumstat, parseStatus } from '../hooks/git'
 import { editCounts, hasEditsBelow, parentOf, toEntries, visibleRows } from '../hooks/tree'
 
 const L = (name: string, kind: 'file' | 'dir' = 'file') => ({ name, kind, isLink: false })
@@ -75,4 +75,19 @@ test('fileStatus, dirStatus and lineCounts against the repo top', () => {
   expect(dirStatus(git, 'C:/w/lib')).toBe('')
   expect(lineCounts(git, 'C:/w/src/a.ts')).toEqual([3, 1])
   expect(lineCounts(git, 'C:/w/clean.ts')).toBe(null)
+})
+
+test('dirCounts counts changes beneath a folder by kind, an untracked folder once', () => {
+  const git: GitInfo = {
+    top: 'C:/w', branch: null, untrackedDirs: ['src/gen/', 'tmp/'],
+    status: { 'src/a.ts': 'M', 'src/b.ts': 'R', 'src/c.ts': 'D', 'src/d.ts': '?', 'src/e.ts': 'A', 'src/f.ts': 'U', 'docs/n.md': 'M' },
+    numstat: {},
+  }
+  expect(dirCounts(git, 'C:/w/src')).toEqual({ changed: 3, added: 3, deleted: 1 })
+  expect(dirCounts(git, 'C:/w/docs')).toEqual({ changed: 1, added: 0, deleted: 0 })
+  // Inside an untracked folder there is nothing to count; a clean folder counts nothing.
+  expect(dirCounts(git, 'C:/w/tmp')).toBe(null)
+  expect(dirCounts(git, 'C:/w/src/gen')).toBe(null)
+  expect(dirCounts(git, 'C:/w/lib')).toBe(null)
+  expect(dirCounts(null, 'C:/w/src')).toBe(null)
 })

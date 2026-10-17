@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Step, Turn } from '../types'
 import { ASK_MAX_LINES, askText, fileStamp, historyMarkdown, projectName, stamp } from '../hooks/export'
-import { KEY, PANE, START, world } from './world'
+import { KEY, PANE, START, world, pressRow } from './world'
 
 const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as const
 const AT = new Date(2026, 9, 17, 17, 5).getTime()
@@ -78,7 +78,7 @@ test('Ask Claude appends the step to the prompt box', async ($, on) => {
   await $.session.start(START)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await ui.press({ key: 'tab-history' })
-  await ui.press({ key: 'turn-t1' })
+  await pressRow(ui, 'turn-t1')
   await ui.press({ key: 'ask' })
   expect(fills).toEqual([{ text: askText(T1.steps[0]!, T1), mode: 'append' }])
   await ui.unmount()

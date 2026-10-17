@@ -3,20 +3,27 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Entry, FilesView, GitInfo, Hint, HistoryView, Step, Tab, Tone, Turn } from '../types'
+import type { Entry, FilesView, GitActionEntry, GitInfo, Hint, HistoryView, SearchIndex, Step, StepStatus, Tab, Tone, Turn } from '../types'
 import { FLASH_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
+import { isCommit, readTargets } from './bash'
+import { contextLine, mentionedPaths, resolveMention } from './context'
+import { fullCopy, openCommand, osOf, relativeCopy } from './open'
+import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
 import { filesView } from './files-view'
+import { rowPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
+import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import {
   addTurn, byteSize, BUDGET_BYTES, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
-  projectKey, stepsFor, trimTurnsToBytes,
+  isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
 } from './history'
 import type { EditCall, StoreIndex } from './history'
 import { historyView, TIMELINE } from './history-view'
-import { lower, parentOf, toEntries } from './tree'
+import { MAX_INDEX_FILES, parseLsFiles, SKIP_DIRS } from './search'
+import { joinPath, lower, parentOf, toEntries } from './tree'
 
 export const PANE = 'filetrail'
 
@@ -30,6 +37,45 @@ const flash = atom({ plugin: 'filetrail', key: 'flash' } as const, {} as Record<
 const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone } | null)
 const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | null)
 const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | null)
+const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as SearchIndex | null)
+const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
+// One build at a time: typing fast must not start a listing per key.
+let indexing: Promise<void> | null = null
+
+/**
+ * Lists every file of the project for the search box: git's list in a repo (tracked and
+ * untracked, ignored files left out), else a walk of the folders without .git and
+ * node_modules, cut at MAX_INDEX_FILES.
+ */
+async function buildIndex($: EngineInterface): Promise<void> {
+  const fromGit = await $.process.run(['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: root, timeoutMs: 15_000 })
+    .catch(() => null)
+  if (fromGit && fromGit.exitCode === 0) {
+    const listed = parseLsFiles(fromGit.stdout)
+    await update($, index, () => ({ files: listed.slice(0, MAX_INDEX_FILES * 20), complete: !fromGit.isStdoutTruncated }))
+    return
+  }
+  const found: string[] = []
+  const queue: string[] = ['']
+  let complete = true
+  while (queue.length) {
+    const rel = queue.shift()!
+    let entries: { name: string; kind: string }[] = []
+    try { entries = await $.fs.list(rel ? joinPath(root, rel) : root) } catch { continue }
+    for (const entry of entries) {
+      const child = rel ? `${rel}/${entry.name}` : entry.name
+      if (entry.kind === 'dir') { if (!SKIP_DIRS.has(entry.name)) queue.push(child) }
+      else found.push(child)
+    }
+    if (found.length >= MAX_INDEX_FILES) { complete = false; break }
+  }
+  await update($, index, () => ({ files: found.slice(0, MAX_INDEX_FILES), complete }))
+}
+
+function ensureIndex($: EngineInterface): Promise<void> {
+  indexing ??= buildIndex($).finally(() => { indexing = null })
+  return indexing
+}
 
 /** The saved turns, and the running one after them while it has edits and is not saved yet. */
 function withLive(turns: readonly Turn[], now: Turn | null): readonly Turn[] {
@@ -41,9 +87,33 @@ let root = ''
 // The main-loop turn running now; its steps reach the store when it completes.
 let pending: Turn | null = null
 let callCount = 0
+/** Keeps two git actions started in the same millisecond apart. */
+let gitCount = 0
 // Outside a repo git is asked once per load, not after every edit.
 let isRepo: boolean | null = null
 let gitTimer: { cancel: () => void } | null = null
+// Which system opens files, worked out once per load.
+let hostOs: HostOs | null = null
+
+async function osHere($: EngineInterface): Promise<HostOs> {
+  if (hostOs) return hostOs
+  let uname = ''
+  if (!/^[A-Za-z]:[\\/]/.test(root)) uname = (await $.process.run(['uname', '-s']).catch(() => null))?.stdout ?? ''
+  hostOs = osOf(root, uname)
+  return hostOs
+}
+
+/** Opens a file with its default app and says so; a failure says why. */
+async function openFile($: EngineInterface, path: string) {
+  const ran = await $.process.run(openCommand(await osHere($), path), { timeoutMs: 10_000 })
+  $.ui.toast(ran.exitCode === 0 ? `filetrail: opened ${relTo(root, path)}` : `filetrail: could not open ${relTo(root, path)}: ${ran.stderr.trim() || `exit ${ran.exitCode}`}`)
+}
+
+async function copyPath($: EngineInterface, path: string, full: boolean, surface: string) {
+  const text = full ? fullCopy(await osHere($), path) : relativeCopy(root, path)
+  const done = await $.ui.copy({ text, surface: surface as 'desktop' })
+  $.ui.toast(done.isCopied ? `filetrail: copied ${text.replace(/\\/g, '/')}` : `filetrail: could not copy: ${done.reason}`)
+}
 const flashTimers = new Map<string, { cancel: () => void }>()
 
 const rowKey = (path: string) => `row-${lower(path)}`
@@ -99,6 +169,32 @@ async function touch($: EngineInterface, target: Target) {
   if (target.follow) await reveal($, target.path, false)
 }
 
+/** Paths of one Bash command lit at most: a wide `cat a b c …` should not light the whole tree. */
+const MAX_BASH_TARGETS = 12
+
+/**
+ * Lights what a Bash command is about to read: files a reader names (the first one
+ * followed into view) and the folders or files a search or listing names (lit only).
+ * Only paths inside the project that exist are touched.
+ */
+async function lightReads($: EngineInterface, command: string) {
+  let followed = false
+  for (const t of readTargets(command, root).slice(0, MAX_BASH_TARGETS)) {
+    if (!isInside(root, t.path) || !(await $.fs.exists(t.path))) continue
+    await touch($, { path: t.path, tone: 'read', follow: t.follow && !followed })
+    if (t.follow) followed = true
+  }
+}
+
+/** After a commit went through, lights the files it holds in the commit's green. */
+async function lightCommit($: EngineInterface) {
+  const shown = await $.process.run(['git', 'show', '--name-only', '--format=', '--relative', 'HEAD'], { cwd: root, timeoutMs: 10_000 })
+  if (shown.exitCode !== 0) return
+  for (const rel of shown.stdout.split(/\r?\n/).filter(Boolean).slice(0, 20)) {
+    await touch($, { path: joinPath(root, rel), tone: 'commit', follow: false })
+  }
+}
+
 async function listDir($: EngineInterface, dir: string) {
   let entries: Entry[] = []
   try {
@@ -119,8 +215,15 @@ async function listDir($: EngineInterface, dir: string) {
 async function relist($: EngineInterface) {
   const open = new Set((await read($, files)).expanded)
   const listed = Object.keys(await read($, listing))
-  const dirs = listed.filter(d => d === lower(root) || open.has(d))
-  for (const d of dirs) await listDir($, d === lower(root) ? root : d)
+  // Shallowest first, so each folder's own spelling is in its parent's fresh listing:
+  // the keys are lower-cased, and listing by a key gave every row a lower-cased path
+  // (seen live: the selected file's full path came out all lower case).
+  const dirs = listed.filter(d => d === lower(root) || open.has(d)).sort((a, b) => a.length - b.length)
+  for (const d of dirs) {
+    const now = await read($, listing)
+    const spelled = d === lower(root) ? root : Object.values(now).flat().find(e => e.kind === 'dir' && lower(e.path) === d)?.path ?? d
+    await listDir($, spelled)
+  }
   await update($, listing, l => Object.fromEntries(Object.entries(l).filter(([d]) => dirs.includes(d))))
 }
 
@@ -242,6 +345,22 @@ async function openReplay($: EngineInterface, turnId: string) {
   return openPane($, true, true)
 }
 
+/** Puts the git actions a command runs in the bar as running; their ids, to finish them by. */
+async function startGitActions($: EngineInterface, command: string): Promise<string[]> {
+  const calls = gitActionsOf(command)
+  if (!calls.length) return []
+  const at = await $.clock.now()
+  const added: GitActionEntry[] = calls.map((c, i) => ({ id: `g${at}.${gitCount++}.${i}`, ...c, state: 'running', at }))
+  await update($, gitLog, list => [...list, ...added].slice(-MAX_ACTIONS))
+  return added.map(a => a.id)
+}
+
+/** Marks the bar's running actions done, failed or denied, as the command came out. */
+async function finishGitActions($: EngineInterface, ids: readonly string[], outcome: StepStatus): Promise<void> {
+  const state: GitActionEntry['state'] = outcome === 'denied' ? 'denied' : outcome === 'failed' ? 'failed' : 'ok'
+  await update($, gitLog, list => list.map(a => (ids.includes(a.id) ? { ...a, state } : a)))
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
@@ -272,6 +391,23 @@ export const register: Register = on => {
     let target: Target | null = null
     try { target = targetOf(e as unknown as { tool: string }) } catch { /* nothing to light */ }
     if (target && target.tone === 'read') await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
+    if (e.tool === 'Bash') {
+      const command = String((e as unknown as { command?: unknown }).command ?? '')
+      await lightReads($, command).catch(err => $.ui.log(`filetrail: Bash highlight failed: ${String(err)}`))
+      const ids = await startGitActions($, command).catch(err => { $.ui.log(`filetrail: the git bar did not update: ${String(err)}`); return [] as string[] })
+      const r = await next(e)
+      // A folder found not to be a repo is asked again once one is made in it.
+      if (makesRepo(command)) { isRepo = null; scheduleGit($) }
+      if (ids.length) {
+        await finishGitActions($, ids, outcomeOf(r)).catch(err => $.ui.log(`filetrail: the git bar did not update: ${String(err)}`))
+        if (!isCommit(command)) scheduleGit($)
+      }
+      if (isCommit(command)) {
+        if (outcomeOf(r) === 'ok') await lightCommit($).catch(err => $.ui.log(`filetrail: commit highlight failed: ${String(err)}`))
+        scheduleGit($)
+      }
+      return r
+    }
     if (!EDIT_TOOLS.has(e.tool)) return next(e)
     let steps: Turn['steps'] = []
     try {
@@ -318,10 +454,32 @@ export const register: Register = on => {
     await update($, live, () => null)
     // Bash may have changed files too: list the open folders and read git again.
     await relist($)
+    // Files may have come or gone: a search already in use gets a fresh list.
+    if (await read($, index)) void ensureIndex($).catch(err => $.ui.log(`filetrail: the search list was not rebuilt: ${String(err)}`))
     scheduleGit($)
     return r
   }).catch(async ($, e, next) => {
     $.ui.log(`filetrail: turn.complete failed: ${String(next.error)}`)
+    return next.called ? undefined : next(e)
+  })
+
+  // A prompt typed while a file is selected carries one line saying so, until ✕ clears the
+  // selection. An @path in it that names a file of the project opens the tree there.
+  // Slash commands and hidden prompts are passed as they are.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command || e.isMeta) return next(e)
+    for (const mention of mentionedPaths(e.text)) {
+      const path = resolveMention(root, mention)
+      if (isInside(root, path) && (await $.fs.exists(path))) {
+        await reveal($, path, true)
+        break
+      }
+    }
+    const selected = (await read($, files)).selected
+    if (!selected) return next(e)
+    return next({ ...e, context: [...(e.context ?? []), contextLine(root, selected)] })
+  }).catch(async ($, e, next) => {
+    $.ui.log(`filetrail: prompt.submit failed: ${String(next.error)}`)
     return next.called ? undefined : next(e)
   })
 
@@ -382,8 +540,19 @@ export const register: Register = on => {
     }
   })
 
+  // A tree row is a Client (hooks/row.tsx) so its colours paint on the desktop; its press
+  // arrives here as a post, and the row's own action runs, as a Button's onPress would.
+  on('ui.message', async ($, e, next) => {
+    const data = e.data as { press?: unknown } | null
+    const press = e.requestId === PANE && data && typeof data === 'object' && data.press === true ? rowPresses.get(e.element) : undefined
+    if (!press) return next(e)
+    press()
+    return {}
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
+    rowPresses.clear()
     const { Box, Text, Button } = els
     const current = await read($, tab)
     const running = await read($, live)
@@ -414,7 +583,18 @@ export const register: Register = on => {
                   await update($, view, () => ({ turn: null, file: path, step: 0 }))
                   await update($, tab, () => 'history')
                 }),
-              })
+                unselect: () => fire($, 'clearing the selection', () => update($, files, f => ({ ...f, selected: null }))),
+                search: query => fire($, 'searching', async () => {
+                  await update($, files, f => ({ ...f, query }))
+                  if (query.trim() && !(await read($, index))) await ensureIndex($)
+                }),
+                open: path => fire($, 'opening the file', () => openFile($, path)),
+                copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
+                openHit: rel => fire($, 'opening a search result', async () => {
+                  await update($, files, f => ({ ...f, query: '' }))
+                  await reveal($, joinPath(root, rel), true)
+                }),
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

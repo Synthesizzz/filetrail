@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Step, Turn } from '../types'
 import { hintFor, hintText } from '../hooks/band'
 import { FOLD_LINES } from '../hooks/history-view'
-import { DONE, KEY, PANE, START, hasText, world } from './world'
+import { DONE, KEY, PANE, START, hasText, world, pressRow } from './world'
 
 const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as const
 const BAND = {
@@ -114,7 +114,7 @@ test('Close closes the pane', async ($, on) => {
   await $.session.start(START)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await ui.press({ key: 'tab-history' })
-  await ui.press({ key: 'turn-t1' })
+  await pressRow(ui, 'turn-t1')
   await ui.press({ key: 'close' })
   expect(closes).toEqual([expect.objectContaining({ id: 'filetrail' })])
   await ui.unmount()
@@ -128,7 +128,7 @@ test(`a long diff folds at ${FOLD_LINES} lines; Show all unfolds it until anothe
   await $.session.start(START)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await ui.press({ key: 'tab-history' })
-  await ui.press({ key: 'turn-t1' })
+  await pressRow(ui, 'turn-t1')
 
   expect(await hasText(ui, `+ line ${FOLD_LINES - 1}`)).toBe(true)
   expect(await hasText(ui, `+ line ${FOLD_LINES}`)).toBe(false)

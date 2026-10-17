@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Step, Turn } from '../types'
 import { statusLabel, turnTitle } from '../hooks/history-view'
-import { DONE, KEY, PANE, START, hasText, world } from './world'
+import { DONE, KEY, PANE, START, hasText, world, pressRow, rowText } from './world'
 
 const FILES = { 'C:\\work\\demo\\a.ts': 'x\ngreet()\n' }
 const edit = (file: string) => ({ tool: 'Edit' as const, file_path: `C:\\work\\demo\\${file}`, old_string: 'greet', new_string: 'welcome' })
@@ -42,21 +42,21 @@ test('the timeline shows Now on top while the turn runs, then the saved turn in 
 
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await ui.press({ key: 'tab-history' })
-  const rows = (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('turn-'))
+  const rows = (await ui.findAll({ type: 'Client' })).map(b => b.key).filter(k => k?.startsWith('turn-'))
   expect(rows).toEqual(['turn-t1', 'turn-old'])
-  expect((await ui.find({ key: 'turn-t1' }))?.text).toBe('Now  rename greet')
+  expect((await rowText(ui, 'turn-t1'))).toBe('Now  rename greet')
   expect(await hasText(ui, 'working · 1 file · 1 edit · +1 -1')).toBe(true)
   expect(await hasText(ui, '1 turn · 1 running')).toBe(true)
 
   // Open the running turn, then let it end: the view stays on it, now with its time.
-  await ui.press({ key: 'turn-t1' })
+  await pressRow(ui, 'turn-t1')
   expect(await hasText(ui, 'step 1 of 1')).toBe(true)
   await $.turn.complete({ ...DONE, turnId: 't1' })
   expect(await hasText(ui, 'step 1 of 1')).toBe(true)
   expect(await hasText(ui, 'Now  rename greet')).toBe(false)
 
   await ui.press({ key: 'back' })
-  expect((await ui.find({ key: 'turn-t1' }))?.text).toMatch(/^\d\d:\d\d\s+rename greet$/)
+  expect((await rowText(ui, 'turn-t1'))).toMatch(/^\d\d:\d\d\s+rename greet$/)
   expect(await hasText(ui, '2 turns')).toBe(true)
   await ui.unmount()
 })

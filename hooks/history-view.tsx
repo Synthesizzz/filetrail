@@ -4,7 +4,13 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { DiffLine, HistoryView, Step, Turn } from '../types'
+import { TONE_SHIMMER } from './files-view'
 import { clip, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS } from './paths'
+import { rowPresses } from './presses'
+import type { RowProps, Seg } from './row'
+
+/** A saved turn's time: a blue that reads on light and dark backgrounds alike. */
+export const TIME_COLOR = '#60a5fa'
 
 type Els = ReturnType<EngineInterface['ui']['resolve']>
 
@@ -127,12 +133,46 @@ export function layoutFor(width: number): Layout {
 
 type ListOptions = { selected: string | null; width: number; narrow: boolean }
 
+/**
+ * A turn's title as coloured runs: the marker when selected, the time in blue (or
+ * "Now", shimmering as a write does, while it runs), then the prompt, cut to `budget`
+ * characters in all.
+ */
+export function titleSegs(turn: Turn, now: number, liveId: string | null, selected: boolean, budget: number): Seg[] {
+  const isLive = turn.id === liveId
+  const when = isLive ? 'Now' : formatAt(turn.at, now)
+  const segs: Seg[] = []
+  if (selected) segs.push({ t: '› ', c: 'claude', b: true })
+  segs.push(isLive ? { t: when, c: 'claude', b: true, sh: TONE_SHIMMER.write } : { t: when, c: TIME_COLOR })
+  const lead = segs.reduce((n, s) => n + s.t.length, 0) + 2
+  segs.push({ t: NBSP + NBSP + clip(turn.prompt || '(no prompt)', Math.max(8, budget - lead)), ...(isLive || selected ? { b: true } : {}) })
+  return segs
+}
+
+/** A turn's summary as coloured runs: counts dim, lines added green, removed red, edits not applied yellow. */
+function summaryLine(els: Els, turn: Turn, isLive: boolean) {
+  const { Text } = els
+  const s = summarize(turn)
+  return (
+    <Text wrap="wrap">
+      {isLive ? <Text color="claude">working · </Text> : null}
+      <Text dimColor>{`${s.files} file${s.files === 1 ? '' : 's'} · ${s.edits} edit${s.edits === 1 ? '' : 's'} · `}</Text>
+      <Text color="success">{`+${s.add}`}</Text>
+      <Text dimColor> </Text>
+      <Text color="error">{`-${s.del}`}</Text>
+      {s.problems ? <Text color="warning">{` · ${s.problems} not applied`}</Text> : null}
+    </Text>
+  )
+}
+
 function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now: number, liveId: string | null, opts: ListOptions) {
   const { Box, Text, Button } = els
+  const Client = 'Client' in els ? els.Client : undefined
   const { set } = actions
   const saved = turns.filter(t => t.id !== liveId).length
   // A title gets two lines of the column at most.
-  const title = (turn: Turn) => clip(turnTitle(turn, now, liveId), Math.max(24, opts.width * 2 - 4))
+  const budget = Math.max(24, opts.width * 2 - 4)
+  const title = (turn: Turn) => clip(turnTitle(turn, now, liveId), budget)
   if (!turns.length) {
     return (
       <Box key="timeline" flexDirection="column">
@@ -150,13 +190,22 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
       {[...turns].reverse().map(turn => {
         const isLive = turn.id === liveId
         const isSelected = turn.id === opts.selected
+        const key = `turn-${turn.id}`
+        const open = () => set({ turn: turn.id, file: null, step: 0 })
+        const segs = titleSegs(turn, now, liveId, isSelected, budget)
+        if (Client) rowPresses.set(key, open)
         return (
           <Box key={`row-${turn.id}`} flexDirection="column" marginBottom={1}>
-            <Button key={`turn-${turn.id}`} plain onPress={() => set({ turn: turn.id, file: null, step: 0 })}>
-              {isSelected ? '› ' : ''}
-              <Text wrap="wrap" {...(isLive ? { color: 'claude' as const } : {})} {...(isLive || isSelected ? { bold: true } : {})}>{title(turn)}</Text>
-            </Button>
-            <Text dimColor wrap="wrap">{isLive ? 'working · ' : ''}{summaryText(turn)}</Text>
+            {/* A Client, as in the Files tree: a desktop Button drops the colours of the Text in it. */}
+            {Client
+              ? <Client key={key} module="./row.tsx" width="100%" props={{ segs, wrap: true, hoverAt: segs.length - 1 } satisfies RowProps} />
+              : (
+                <Button key={key} plain onPress={open}>
+                  {isSelected ? '› ' : ''}
+                  <Text wrap="wrap" {...(isLive ? { color: 'claude' as const } : {})} {...(isLive || isSelected ? { bold: true } : {})}>{title(turn)}</Text>
+                </Button>
+              )}
+            {summaryLine(els, turn, isLive)}
           </Box>
         )
       })}

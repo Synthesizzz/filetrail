@@ -98,3 +98,27 @@ export function lineCounts(git: GitInfo | null, path: string): [number, number] 
   if (!git) return null
   return git.numstat[relTo(git.top, path).toLowerCase()] ?? null
 }
+
+/** How many changed paths a folder holds, by kind: changed (M, renamed, conflicted), new (untracked or added), deleted. */
+export type DirCounts = { changed: number; added: number; deleted: number }
+
+/**
+ * Counts the changes beneath a folder, each untracked folder git reports counting once
+ * (git does not list what is in one). Null when the folder itself is untracked, where
+ * there is nothing to count but the folder, or when nothing beneath it changed.
+ */
+export function dirCounts(git: GitInfo | null, dir: string): DirCounts | null {
+  if (!git) return null
+  const rel = relTo(git.top, dir).toLowerCase().replace(/\/+$/, '')
+  const prefix = rel + '/'
+  if (git.untrackedDirs.some(d => prefix.startsWith(d))) return null
+  const n: DirCounts = { changed: 0, added: 0, deleted: 0 }
+  for (const [k, c] of Object.entries(git.status)) {
+    if (!k.startsWith(prefix)) continue
+    if (c === '?' || c === 'A') n.added++
+    else if (c === 'D') n.deleted++
+    else n.changed++
+  }
+  n.added += git.untrackedDirs.filter(d => d.startsWith(prefix)).length
+  return n.changed + n.added + n.deleted ? n : null
+}

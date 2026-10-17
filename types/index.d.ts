@@ -66,11 +66,31 @@ export type GitInfo = {
   numstat: Record<string, [number, number]>
 }
 
-/** The Files tab: open folders (lower-cased paths) and the selected path. */
-export type FilesView = { expanded: string[]; selected: string | null }
+/** The Files tab: open folders (lower-cased paths), the selected path, and the search box's text ('' or absent: the tree). */
+export type FilesView = { expanded: string[]; selected: string | null; query?: string }
+
+/** Every file of the project, relative to its root, for the search box; `complete` false when the list was cut short. */
+export type SearchIndex = { files: string[]; complete: boolean }
 
 /** How Claude touched a path just now. */
-export type Tone = 'read' | 'write'
+export type Tone = 'read' | 'write' | 'commit'
+
+/** What a git action does, which picks its colour in the bar. */
+export type GitActionKind = 'save' | 'sync' | 'fetch' | 'branch' | 'merge' | 'stash'
+
+/** One git action in the bar at the bottom of the Files tab. */
+export type GitActionEntry = {
+  id: string
+  /** The bare verb (push), for "push failed". */
+  verb: string
+  running: string
+  done: string
+  kind: GitActionKind
+  /** What the action named (a branch, a remote), '' when nothing. */
+  target: string
+  state: 'running' | 'ok' | 'failed' | 'denied'
+  at: number
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -90,6 +110,10 @@ declare module 'claude-code' {
       hint: Hint | null
       /** The turn running now, while it has edits: shown as "Now" on the timeline until it is saved. */
       live: Turn | null
+      /** The files the search box looks through; null until the first search, built again after each turn. */
+      index: SearchIndex | null
+      /** The last git actions run through Bash, newest last: running, then done or failed, until newer ones push them out. */
+      actions: GitActionEntry[]
     }
   }
 }
