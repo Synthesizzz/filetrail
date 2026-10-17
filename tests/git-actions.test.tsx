@@ -17,6 +17,19 @@ test('gitActionsOf finds git and gh pr actions, with what they name', () => {
   expect(verbs('cd repo; git stash pop')).toEqual(['stash|pop'])
 })
 
+test('gitActionsOf names the folder an action ran in when a cd or -C moved it off the root', () => {
+  const repos = (command: string) => gitActionsOf(command, 'C:/work/demo').map(a => `${a.verb}|${a.repo}`)
+  expect(repos('git commit -m x')).toEqual(['commit|'])
+  expect(repos('git -C C:/Users/me/claude-mods/filetrail commit -F -')).toEqual(['commit|filetrail'])
+  expect(repos('git -C /c/work/demo push')).toEqual(['push|'])
+  expect(repos('git -C . push')).toEqual(['push|'])
+  expect(repos('cd ../other && git pull')).toEqual(['pull|other'])
+  expect(repos('cd sub; git stash; cd ..')).toEqual(['stash|sub'])
+  // No root given (or a cd built at run time): nothing to compare with, so no name.
+  expect(gitActionsOf('git -C ../x push').map(a => a.repo)).toEqual([''])
+  expect(repos('cd $DIR && git push')).toEqual(['push|'])
+})
+
 test('gitActionsOf ignores reads, other programs and words built at run time', () => {
   expect(verbs('git status && git log --oneline -5 && git diff')).toEqual([])
   expect(verbs('echo git push')).toEqual([])
@@ -47,7 +60,7 @@ test('a git init through Bash makes a folder found not to be a repo be asked aga
 })
 
 test('gitActionSegs: running shimmers in its colour, done ticks, failure is red, denial dim', () => {
-  const base: GitActionEntry = { id: 'g1', verb: 'push', running: 'pushing', done: 'pushed', kind: 'sync', target: 'origin main', state: 'running', at: 1 }
+  const base: GitActionEntry = { id: 'g1', verb: 'push', running: 'pushing', done: 'pushed', kind: 'sync', target: 'origin main', repo: '', state: 'running', at: 1 }
   const text = (a: GitActionEntry) => gitActionSegs(a).map(s => s.t.replace(/\u00a0/g, ' ')).join('')
   expect(text(base)).toBe('… pushing origin main')
   expect(gitActionSegs(base)[1]!.sh).toEqual(KIND_SHIMMER.sync)
@@ -56,6 +69,7 @@ test('gitActionSegs: running shimmers in its colour, done ticks, failure is red,
   expect(text({ ...base, state: 'failed' })).toBe('✗ push failed origin main')
   expect(gitActionSegs({ ...base, state: 'failed' })[1]!.c).toBe('error')
   expect(text({ ...base, state: 'denied', target: '' })).toBe('⊘ push denied')
+  expect(text({ ...base, state: 'ok', target: '', repo: 'filetrail' })).toBe('✓ pushed · filetrail')
 })
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = { 'C:\\work\\demo': [['README.md', 'file']] }

@@ -88,6 +88,8 @@ export type GitActionEntry = {
   kind: GitActionKind
   /** What the action named (a branch, a remote), '' when nothing. */
   target: string
+  /** The folder it ran in when not the project's own (a cd or git -C moved it), '' otherwise. */
+  repo: string
   state: 'running' | 'ok' | 'failed' | 'denied'
   at: number
 }

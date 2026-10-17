@@ -97,7 +97,11 @@ export const KIND_SHIMMER: Record<GitActionKind, string[]> = {
 /** One git action as coloured runs: running shimmers in its kind's colour, done has a ✓, a failure a red ✗. */
 export function gitActionSegs(a: GitActionEntry): Seg[] {
   const palette = KIND_SHIMMER[a.kind]
-  const target: Seg[] = a.target ? [{ t: `${NBSP}${a.target}`, dim: true }] : []
+  const target: Seg[] = [
+    ...(a.target ? [{ t: `${NBSP}${a.target}`, dim: true }] : []),
+    // Another repo's action says whose it is, so it is not read as this project's.
+    ...(a.repo ? [{ t: `${NBSP}·${NBSP}${a.repo}`, dim: true }] : []),
+  ]
   if (a.state === 'running') return [{ t: `…${NBSP}`, c: palette[0] }, { t: a.running, c: palette[0], b: true, sh: palette }, ...target]
   if (a.state === 'ok') return [{ t: `✓${NBSP}`, c: palette[0] }, { t: a.done, c: palette[0] }, ...target]
   if (a.state === 'denied') return [{ t: `⊘${NBSP}`, dim: true }, { t: `${a.verb} denied`, dim: true }, ...target]
@@ -133,7 +137,8 @@ export function branchText(git: GitInfo | null): string {
   if (!git) return 'not a git repo'
   if (!git.branch) return 'git'
   const b = git.branch
-  return `⎇ ${b.head}${b.ahead ? ` ↑${b.ahead}` : ''}${b.behind ? ` ↓${b.behind}` : ''}`
+  // A word, not the ⎇ glyph: the desktop's font drew it as an unreadable mark (seen live).
+  return `branch ${b.head}${b.ahead ? ` ↑${b.ahead}` : ''}${b.behind ? ` ↓${b.behind}` : ''}`
 }
 
 export function filesView(

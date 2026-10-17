@@ -347,7 +347,7 @@ async function openReplay($: EngineInterface, turnId: string) {
 
 /** Puts the git actions a command runs in the bar as running; their ids, to finish them by. */
 async function startGitActions($: EngineInterface, command: string): Promise<string[]> {
-  const calls = gitActionsOf(command)
+  const calls = gitActionsOf(command, root)
   if (!calls.length) return []
   const at = await $.clock.now()
   const added: GitActionEntry[] = calls.map((c, i) => ({ id: `g${at}.${gitCount++}.${i}`, ...c, state: 'running', at }))

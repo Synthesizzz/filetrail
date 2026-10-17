@@ -30,7 +30,7 @@ test('Files: the root listing, git status, line counts and edit badges', async (
   await clock.advance(1000)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
 
-  expect(await ui.find({ type: 'Text', text: '⎇ main ↑1' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'branch main ↑1' })).toBeDefined()
   // Each tree row is a Client: its colours paint on the desktop, where a Button drops them.
   const rows = (await ui.findAll({ type: 'Client' })).map(b => b.key).filter(k => k?.startsWith('row-'))
   expect(rows).toEqual(ROOT_ROWS.map(n => rowKey(`C:/work/demo/${n}`)))
