@@ -13,7 +13,7 @@ import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
 import { filesView } from './files-view'
-import { clearRows, rowCopies, rowOpens, rowPresses } from './presses'
+import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import {
@@ -545,8 +545,9 @@ export const register: Register = on => {
   // A double-click's second click opens a file (a folder has nothing to open, so it is
   // let be rather than closing what the first click opened); a right-click copies the path.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown } | null
+    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown; tool?: unknown } | null
     if (e.requestId !== PANE || !data || typeof data !== 'object') return next(e)
+    if (typeof data.tool === 'string' && toolPresses.has(data.tool)) { toolPresses.get(data.tool)!(); return {} }
     if (data.press === true && rowPresses.has(e.element)) { rowPresses.get(e.element)!(); return {} }
     if (data.open === true) { rowOpens.get(e.element)?.(); return {} }
     if (data.copy === true && rowCopies.has(e.element)) { rowCopies.get(e.element)!(data.full === true, e.surface); return {} }

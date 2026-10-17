@@ -9,7 +9,8 @@ import type { DirCounts } from './git'
 import { relTo } from './history'
 import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
-import { rowCopies, rowOpens, rowPresses } from './presses'
+import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
+import type { Tool, ToolsProps } from './tools'
 import { findFiles } from './search'
 import { editCounts, hasEditsBelow, lower, visibleRows } from './tree'
 
@@ -226,6 +227,15 @@ export function filesView(
   const shown = rows.slice(0, MAX_ROWS)
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
+  const tools: (Tool & { run: () => void })[] = [
+    { id: 'refresh', glyph: '↻', hint: 'Refresh folders and git', run: () => actions.refresh() },
+    files.hideDots
+      ? { id: 'dots', glyph: '○', hint: 'Show dotfiles', run: () => actions.toggleDots() }
+      : { id: 'dots', glyph: '◉', hint: 'Hide dotfiles', run: () => actions.toggleDots() },
+    { id: 'collapse', glyph: '⊟', hint: 'Close all folders', run: () => actions.collapseAll() },
+    ...(files.selected !== null ? [{ id: 'go-selected', glyph: '⌖', hint: 'Go to the selected file', run: () => actions.goToSelected() }] : []),
+  ]
+  for (const t of tools) toolPresses.set(t.id, t.run)
 
   return (
     // Step-named gaps: the desktop sizes them on its own scale (seen live: rows and sections ran together),
@@ -233,16 +243,17 @@ export function filesView(
     <Box key="files" flexDirection="column" gap="md">
       {/* As filetree heads its tree: the folder, then the branch and its upstream with the repo's changes at the right. */}
       <Box key="files-head" flexDirection="column" gap="xs">
-        <Box key="name-line" flexDirection="row" flexWrap="wrap" gap={1}>
+        <Box key="name-line" flexDirection="row" gap={1}>
           <Text bold color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
-          <Box flexGrow={1} />
-          {/* filetree's header buttons, its plain Unicode glyphs; no hotkeys (the desktop draws a chip beside each). */}
-          <Box key="tree-tools" flexDirection="row" gap={1}>
-            <Button key="refresh" label="↻" plain dimColor onPress={() => actions.refresh()} />
-            <Button key="dots" label={files.hideDots ? '○' : '◉'} plain dimColor onPress={() => actions.toggleDots()} />
-            <Button key="collapse" label="⊟" plain dimColor onPress={() => actions.collapseAll()} />
-            {files.selected !== null ? <Button key="go-selected" label="⌖" plain dimColor onPress={() => actions.goToSelected()} /> : null}
-          </Box>
+          {/* filetree's header buttons, its plain Unicode glyphs. A Client draws them where it can, so
+              hovering one says what it does (a desktop Button has no tooltip); Buttons elsewhere. */}
+          {Client
+            ? <Client key="tree-tools" module="./tools.tsx" flexGrow={1} props={{ tools: tools.map(({ id, glyph, hint }) => ({ id, glyph, hint })) } satisfies ToolsProps} />
+            : (
+              <Box key="tree-tools" flexDirection="row" gap={1} flexGrow={1} justifyContent="flex-end">
+                {tools.map(t => <Button key={t.id} label={t.glyph} plain dimColor onPress={t.run} />)}
+              </Box>
+            )}
         </Box>
         <Box key="branch-line" flexDirection="row" gap={1}>
           <Text dimColor={!git} wrap="truncate-end" {...(git?.branch ? { color: 'claude', bold: true } : {})}>{branchText(git)}</Text>

@@ -10,7 +10,11 @@ export const rowOpens = new Map<string, () => void>()
 /** A right-click: the row's path to the clipboard, whole with shift held. */
 export const rowCopies = new Map<string, (full: boolean, surface: string) => void>()
 
+/** A toolbar icon's click, by the tool's id. */
+export const toolPresses = new Map<string, () => void>()
+
 export function clearRows(): void {
+  toolPresses.clear()
   rowPresses.clear()
   rowOpens.clear()
   rowCopies.clear()
