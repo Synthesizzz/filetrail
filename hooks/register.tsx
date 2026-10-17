@@ -13,6 +13,7 @@ import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
 import { filesView, MAX_ROWS } from './files-view'
+import { spelled } from './now-card'
 import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
@@ -42,6 +43,8 @@ const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as Searc
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
 const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as Preview | null)
 const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as TouchedFile[])
+/** Kept in the session's state, so a reload starts from the head measured before. */
+const headRows = atom({ plugin: 'filetrail', key: 'head' } as const, null as number | null)
 /** Files the Claude touched list keeps. */
 const MAX_TOUCHED = 8
 // One build at a time: typing fast must not start a listing per key.
@@ -145,6 +148,11 @@ const browsed = new Map<string, number>()
 async function reveal($: EngineInterface, path: string, select: boolean, follow = false) {
   const dirs = foldersTo(root, path)
   if (!dirs) return
+  // The person is scrolling the tree: Claude's file is noted for Back to Claude, the tree left be.
+  if (follow && (await $.clock.now()) < hold.until) {
+    await update($, files, f => ({ ...f, away: lower(path) }))
+    return
+  }
   const listed = await read($, listing)
   for (const d of dirs) if (!(lower(d) in listed)) await listDir($, d)
   const want = dirs.map(lower)
@@ -166,28 +174,67 @@ async function reveal($: EngineInterface, path: string, select: boolean, follow 
 }
 
 /**
- * The pane's fixed head and the tree under it. The head's height is measured, not known
- * (the card's rows and the crab's pixels vary): each ui.scroll says how many rows the
- * whole pane drew, less the tree's lines drawn then. A first guess on the small side
- * draws the tree too long, so the first measure comes soon.
+ * The pane's fixed head and the tree under it. On the desktop the pane's window is the
+ * desktop's: the wheel moves it before ui.scroll says so, and a mod can put it only at its
+ * start or end (seen in traces). So the tree is drawn to fit under the head, nothing is
+ * left to scroll, and it moves by Claude's glide and the ▲ ▼ buttons. The head's height
+ * is measured, not known (the card's rows and the crab's pixels vary): when the pane
+ * overflows after all and the person's wheel moves it, ui.scroll says how many rows it
+ * drew, less the tree's lines; the pane then goes back to its start.
  */
-const HEAD_GUESS = 4
-const pane = { headRows: HEAD_GUESS, fit: 0, treeLines: 0, windowAt: 0 }
+/** Large on purpose: a head guessed too big leaves blank rows, too small hides the ▼ below the edge. */
+const HEAD_GUESS = 22
+const pane = { headRows: HEAD_GUESS, fit: 0, treeLines: 0, windowAt: 0, drawnAt: 0 }
+/** The tabs, the card and the search box take this many rows at least: a smaller head is a misread. */
+const MIN_HEAD_ROWS = 6
+/** How long after a redraw the pane's row count is trusted to be the new layout's. */
+const SETTLE_MS = 300
+/** The head as last measured, kept for the next session: the guess is only for the first. */
+const HEAD_KEY = 'filetrail:head'
 
-/**
- * Asks the pane to move to its end once its redraws settle: the ui.scroll that comes
- * measures the head (and the hook keeps the window where it is). A pane whose content
- * fits raises none, nothing then being off screen.
- */
-let measuring: { cancel: () => void } | null = null
-function scheduleMeasure($: EngineInterface) {
-  measuring?.cancel()
-  measuring = $.clock.after(MEASURE_MS, () => {
-    measuring = null
-    void $.ui.scroll({ to: 'end', in: PANE }).catch(() => undefined)
+/** Puts the pane's window back at its start, where the card is, once the desktop moved it. */
+let snapping: { cancel: () => void } | null = null
+function snapTop($: EngineInterface) {
+  snapping?.cancel()
+  snapping = $.clock.after(SNAP_MS, () => {
+    snapping = null
+    void $.ui.scroll({ to: 'start', in: PANE }).catch(() => undefined)
   })
 }
-const MEASURE_MS = 400
+/** The wheel's ticks come in a burst: the pane goes back once they pause. */
+const SNAP_MS = 60
+
+/**
+ * The person scrolling the tree holds the follow for BROWSE_MS (as a folder they open is
+ * left be): the tree stays where they are looking, and what Claude touches meanwhile waits
+ * behind Back to Claude. The hold runs out on its own, and the tree goes back to Claude.
+ */
+const hold = { until: 0, timer: null as { cancel: () => void } | null }
+
+/** Moves the tree's first row by `by` rows, as the person scrolls it, and holds the follow. */
+async function scrollTree($: EngineInterface, by: number) {
+  const f = await read($, files)
+  const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
+  const top = clampTop((f.top ?? 0) + by, count, Math.max(1, pane.fit - 1))
+  // The person takes over from a glide still under way.
+  gliding++
+  hold.until = (await $.clock.now()) + BROWSE_MS
+  hold.timer?.cancel()
+  hold.timer = $.clock.after(BROWSE_MS, () => void release($).catch(() => undefined))
+  if (top !== (f.top ?? 0)) await update($, files, x => ({ ...x, top }))
+}
+
+/** Ends the hold: the tree goes to the file Claude touched meanwhile, if any. */
+async function release($: EngineInterface) {
+  hold.timer?.cancel()
+  hold.timer = null
+  hold.until = 0
+  const away = (await read($, files)).away
+  if (!away) return
+  await update($, files, f => ({ ...f, away: undefined }))
+  await reveal($, spelled(await read($, listing), away), false, true)
+}
+
 
 /** Counts glides, so a newer one stops an older one mid-way. */
 let gliding = 0
@@ -477,6 +524,9 @@ export const register: Register = on => {
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
     // A reload forgets the running turn's steps, so a Now row left in state would never be saved.
     await update($, live, () => null)
+    // The head measured in an earlier session, unless this one measured it already.
+    const kept = await $.store.get(HEAD_KEY)
+    if (typeof kept === 'number' && (await read($, headRows)) === null) await update($, headRows, () => kept)
     await listDir($, root)
     scheduleGit($)
     void openPane($)
@@ -668,28 +718,24 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The tree scrolls under a fixed head: in the Files tab's tree, the person's wheel moves
-  // the tree's first row and the pane's window stays at the top, so the card stays on
-  // screen. A move the pane needs to get back to the top goes through. Elsewhere (History,
-  // a preview, search results) the pane scrolls as the engine moves it.
+  // The tree's head stays put: in the Files tab's tree the pane has nothing to scroll. If it
+  // overflowed after all (the card grew), the person's wheel measures the head and the
+  // pane goes back to its start. Elsewhere (History, a preview, search results) the pane
+  // scrolls as usual.
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
     const f = await read($, files)
     if ((await read($, tab)) !== 'files' || (f.query ?? '').trim() || (await read($, preview))) return next(e)
-    // Measure the head: all the pane drew, less the tree's lines.
+    // All the pane drew, less the tree's lines. The person's moves only, from a settled
+    // layout that overflows: the mod's own read a count from before (seen in a trace).
     const head = e.contentRows - pane.treeLines
-    if (head > 0 && head !== pane.headRows) {
+    const settled = (await $.clock.now()) - pane.drawnAt >= SETTLE_MS
+    if (e.origin.kind === 'person' && settled && e.contentRows > e.bodyRows && head >= MIN_HEAD_ROWS && head !== pane.headRows) {
       pane.headRows = head
-      $.ui.invalidate('ui.render')
+      await update($, headRows, () => head)
+      await $.store.set(HEAD_KEY, head)
     }
-    if (pane.windowAt > 0) return next({ ...e, offset: 0 })
-    // A plugin's move to the top goes through; the measuring move to the end stays put.
-    if (e.origin.kind !== 'person') return e.offset === 0 ? next(e) : {}
-    const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
-    const top = clampTop((f.top ?? 0) + e.by, count, Math.max(1, pane.fit - 1))
-    // The person takes over from a glide still under way.
-    gliding++
-    if (top !== (f.top ?? 0)) await update($, files, x => ({ ...x, top }))
-    return {}
+    if (e.origin.kind === 'person' && e.offset > 0) snapTop($)
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -697,12 +743,18 @@ export const register: Register = on => {
     // Where the pane's window stands, the tree's room under the head, and the lines it
     // will draw: what the ui.scroll hook measures the head against.
     pane.windowAt = e.props.scroll.offset
+    pane.headRows = (await read($, headRows)) ?? HEAD_GUESS
+    pane.drawnAt = await $.clock.now()
     pane.fit = treeRows(e.props.scroll.bodyRows, pane.headRows)
     {
       const f = await read($, files)
       const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
-      pane.treeLines = count ? treeLines(treeWindow(count, f.top ?? 0, pane.fit)) : 1
-      if ((await read($, tab)) === 'files' && !(f.query ?? '').trim() && !(await read($, preview))) scheduleMeasure($)
+      // The Following paused line takes one of the tree's rows, and counts.
+      pane.treeLines = (count ? treeLines(treeWindow(count, f.top ?? 0, pane.fit - (f.away ? 1 : 0))) : 1) + (f.away ? 1 : 0)
+      if ((await read($, tab)) === 'files' && !(f.query ?? '').trim() && !(await read($, preview))) {
+        // The desktop moved the pane on its own (seen in a trace, with no ui.scroll): back to its start.
+        if (pane.windowAt > 0) snapTop($)
+      }
     }
     clearRows()
     const { Box, Text, Button } = els
@@ -747,6 +799,8 @@ export const register: Register = on => {
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
                 toggleTouched: () => fire($, 'listing the touched files', () => update($, files, f => ({ ...f, touchedOpen: !f.touchedOpen }))),
+                page: dir => fire($, 'moving the tree', () => scrollTree($, dir * Math.max(1, pane.fit - 2))),
+                backToClaude: () => fire($, 'going back to Claude', () => release($)),
                 refresh: () => fire($, 'refreshing', async () => {
                   await relist($)
                   await refreshGit($)

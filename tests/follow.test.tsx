@@ -71,12 +71,12 @@ test('the tree scrolls under the card: a short pane draws what fits, and glides 
   const { clock } = world(on, { dirs: { 'C:\\work\\demo': many.map(n => [n, 'file'] as [string, 'file']) } })
   await $.session.start(START)
   await clock.settle()
-  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 20 } } })
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 38 } } })
   await clock.settle()
-  // 20 rows less a first guess of the head's 4: 16 lines, the last saying what is below.
+  // 38 rows less a first guess of the head's 22: 16 lines, the last saying what is below.
   expect(await shows(ui, rowKey('C:/work/demo/f14.md'))).toBe(true)
   expect(await shows(ui, rowKey('C:/work/demo/f15.md'))).toBe(false)
-  expect(await hasText(ui, '▼ 15 below')).toBe(true)
+  expect((await ui.find({ key: 'tree-below' }))?.props?.label).toBe('▼ 15 below')
   // The card stays: the head is drawn whatever the tree shows.
   expect(await ui.find({ key: 'now-card' })).toBeDefined()
 
@@ -84,7 +84,56 @@ test('the tree scrolls under the card: a short pane draws what fits, and glides 
   await clock.advance(1000)
   expect(await shows(ui, rowKey('C:/work/demo/f25.md'))).toBe(true)
   expect(await shows(ui, rowKey('C:/work/demo/f00.md'))).toBe(false)
-  expect((await ui.findAll({ type: 'Text' })).some((t: any) => /^▲ \d+ above$/.test(t.text ?? ''))).toBe(true)
+  expect((await ui.find({ key: 'tree-above' }))?.props?.label).toMatch(/^▲ \d+ above$/)
+  await ui.unmount()
+})
+
+const MANY = Array.from({ length: 30 }, (_, k) => `f${String(k).padStart(2, '0')}.md`)
+const SHORT = { ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 38 } } }
+
+test("▼ pages the tree, and holds the follow: Claude's file lights, the tree stays, Back to Claude goes there", { timeoutMs: 10_000 }, async ($, on) => {
+  const { clock } = world(on, { dirs: { 'C:/work/demo': MANY.map(n => [n, 'file'] as [string, 'file']) } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...SHORT })
+  await clock.settle()
+  // A page down: 16 lines less the two marker lines.
+  await ui.press({ key: 'tree-below' })
+  await clock.settle()
+  expect(await shows(ui, rowKey('C:/work/demo/f00.md'))).toBe(false)
+  expect(await shows(ui, rowKey('C:/work/demo/f14.md'))).toBe(true)
+  expect(await ui.find({ key: 'back-to-claude' })).toBeUndefined()
+
+  // Claude reads a file far above while the person is looking here: the tree stays put.
+  await $.tool.call({ tool: 'Read', file_path: 'C:/work/demo/f01.md' })
+  await clock.advance(1000)
+  expect(await shows(ui, rowKey('C:/work/demo/f01.md'))).toBe(false)
+  expect(await shows(ui, rowKey('C:/work/demo/f14.md'))).toBe(true)
+  expect(await hasText(ui, 'Following paused')).toBe(true)
+
+  await ui.press({ key: 'back-to-claude' })
+  await clock.advance(1000)
+  expect(await shows(ui, rowKey('C:/work/demo/f01.md'))).toBe(true)
+  expect(await ui.find({ key: 'back-to-claude' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test("the hold runs out: the tree goes back to Claude's file on its own", { timeoutMs: 10_000 }, async ($, on) => {
+  const { clock } = world(on, { dirs: { 'C:/work/demo': MANY.map(n => [n, 'file'] as [string, 'file']) } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...SHORT })
+  await clock.settle()
+  await ui.press({ key: 'tree-below' })
+  await clock.settle()
+  await $.tool.call({ tool: 'Read', file_path: 'C:/work/demo/f01.md' })
+  await clock.advance(1000)
+  expect(await shows(ui, rowKey('C:/work/demo/f01.md'))).toBe(false)
+
+  await clock.advance(BROWSE_MS)
+  await clock.advance(1000)
+  expect(await shows(ui, rowKey('C:/work/demo/f01.md'))).toBe(true)
+  expect(await ui.find({ key: 'back-to-claude' })).toBeUndefined()
   await ui.unmount()
 })
 
