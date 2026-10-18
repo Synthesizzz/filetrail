@@ -37,7 +37,8 @@ test('Files: the root listing, git status, line counts and edit badges', { timeo
   // Each tree row is a Client: its colours paint on the desktop, where a Button drops them.
   const rows = (await ui.findAll({ type: 'Client' })).map(b => b.key).filter(k => k?.startsWith('row-'))
   expect(rows).toEqual(ROOT_ROWS.map(n => rowKey(`C:/work/demo/${n}`)))
-  expect(ran.map(a => a[1])).toEqual(['rev-parse', 'status', 'diff'])
+  // With history, git is also asked which of its files it ignores (History leaves those out).
+  expect(ran.map(a => a[1])).toEqual(['rev-parse', 'status', 'diff', 'check-ignore'])
 
   // filetree's way, at the right edge: a folder sums its files' lines and counts its changes
   // by kind (Claude's edits a ● before them); a folder untracked as a whole, and each file, a letter.

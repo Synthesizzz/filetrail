@@ -36,6 +36,25 @@ export function clip(text: string, max: number): string {
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const pad = (n: number) => String(n).padStart(2, '0')
 
+/** "17:05", in the machine's local time. */
+export function clockOf(at: number): string {
+  const d = new Date(at)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** A day as History heads it: "Today", "Yesterday", "Oct 14", or "Dec 31, 2025" in another year. */
+export function dayLabel(at: number, now: number): string {
+  const d = new Date(at)
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const today = day(new Date(now))
+  // Whole days between, by the calendar (a daylight-saving day is 23 or 25 hours).
+  const back = Math.round((today - day(d)) / 86_400_000)
+  if (back === 0) return 'Today'
+  if (back === 1) return 'Yesterday'
+  const md = `${MONTHS[d.getMonth()]} ${d.getDate()}`
+  return d.getFullYear() === new Date(now).getFullYear() ? md : `${md}, ${d.getFullYear()}`
+}
+
 /** "17:05" today, "Oct 16 17:05" on another day, in the machine's local time. */
 export function formatAt(at: number, now: number): string {
   const d = new Date(at)

@@ -45,7 +45,7 @@ test('the timeline shows Now on top while the turn runs, then the saved turn in 
   const rows = (await ui.findAll({ type: 'Client' })).map(b => b.key).filter(k => k?.startsWith('turn-'))
   expect(rows).toEqual(['turn-t1', 'turn-old'])
   expect((await rowText(ui, 'turn-t1'))).toBe('Now  rename greet')
-  expect(await hasText(ui, 'working · 1 file · 1 edit · +1 -1')).toBe(true)
+  expect(await hasText(ui, 'working · a.ts · 1 edit · +1 -1')).toBe(true)
   expect(await hasText(ui, '1 turn · 1 running')).toBe(true)
 
   // Open the running turn, then let it end: the view stays on it, now with its time.

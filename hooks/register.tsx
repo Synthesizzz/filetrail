@@ -43,6 +43,8 @@ const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as Searc
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
 const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as Preview | null)
 const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as TouchedFile[])
+/** The files of the history git ignores (lower-cased): History leaves them out. */
+const ignored = atom({ plugin: 'filetrail', key: 'ignored' } as const, [] as string[])
 /** Kept in the session's state, so a reload starts from the head measured before. */
 const headRows = atom({ plugin: 'filetrail', key: 'head' } as const, null as number | null)
 /** Files the Claude touched list keeps. */
@@ -374,6 +376,23 @@ async function refreshGit($: EngineInterface) {
     numstat: numstat.exitCode === 0 ? parseNumstat(numstat.stdout) : {},
   }
   await update($, git, () => info)
+  await refreshIgnored($)
+}
+
+/**
+ * Asks git which files of the history it ignores (a notes file kept out of the repo, a
+ * build output), for History to leave out. Only the history's own paths are asked, on
+ * stdin; a tracked file is never reported, git's rules being for untracked ones.
+ */
+async function refreshIgnored($: EngineInterface) {
+  const paths = [...new Set((await read($, history)).flatMap(t => t.steps.map(s => s.path)))].filter(p => isInside(root, p))
+  if (!paths.length) return
+  const rels = paths.map(p => relTo(root, p))
+  const asked = await $.process.run(['git', 'check-ignore', '--stdin'], { cwd: root, timeoutMs: 10_000, stdin: rels.join('\n') + '\n' })
+  // 0: some are ignored, 1: none is; anything else is git failing, and leaves the list as it was.
+  if (asked.exitCode !== 0 && asked.exitCode !== 1) return
+  const out = asked.exitCode === 0 ? asked.stdout.split(/\r?\n/).filter(Boolean).map(rel => lower(joinPath(root, rel))) : []
+  await update($, ignored, () => out)
 }
 
 /** Git is read again once edits settle, not on every one. */
@@ -843,7 +862,7 @@ export const register: Register = on => {
                   await update($, tab, () => 'files')
                   await reveal($, path, true)
                 }),
-              }, await $.clock.now(), e.props.bodyColumns, running?.id ?? null)}
+              }, await $.clock.now(), e.props.bodyColumns, running?.id ?? null, await read($, ignored))}
         </Box>
       </Box>
     )

@@ -5,9 +5,9 @@ import type { EngineInterface } from 'claude-code'
 
 import type { DiffLine, HistoryView, Step, Turn } from '../types'
 import { TONE_SHIMMER } from './files-view'
-import { clip, formatAt, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS } from './paths'
+import { clip, clockOf, dayLabel, formatAt, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS } from './paths'
 
-export { formatAt }
+export { dayLabel, formatAt }
 import { rowPresses } from './presses'
 import type { RowProps, Seg } from './row'
 
@@ -30,11 +30,49 @@ export function summarize(turn: Turn): { files: number; edits: number; add: numb
   return { files: new Set(turn.steps.map(s => s.path.toLowerCase())).size, edits: turn.steps.length, add, del, problems }
 }
 
+/** Files a turn's summary names before it only counts them. */
+export const NAMED_FILES = 2
+
+/**
+ * What a turn's summary says it touched: the files' names, in the order first edited,
+ * up to NAMED_FILES of them (seen live: "1 file" told nothing until the turn was opened),
+ * else how many.
+ */
+export function filesText(turn: Turn): string {
+  const names: string[] = []
+  const seen = new Set<string>()
+  for (const s of turn.steps) {
+    const k = s.path.toLowerCase()
+    if (seen.has(k)) continue
+    seen.add(k)
+    names.push(splitPath(s.rel).name)
+  }
+  return names.length <= NAMED_FILES ? names.join(' · ') : `${names.length} files`
+}
+
 export function summaryText(turn: Turn): string {
   const s = summarize(turn)
-  const parts = [`${s.files} file${s.files === 1 ? '' : 's'}`, `${s.edits} edit${s.edits === 1 ? '' : 's'}`, `+${s.add} -${s.del}`]
+  const parts = [filesText(turn), `${s.edits} edit${s.edits === 1 ? '' : 's'}`, `+${s.add} -${s.del}`]
   if (s.problems) parts.push(`${s.problems} not applied`)
   return parts.join(' · ')
+}
+
+/**
+ * Turns as History shows them: steps on files git ignores (a notes file, a build output)
+ * left out, and turns left with none, counted in `hidden` (seen live: most turns of a
+ * session were one line of a local notes file, burying the edits that matter).
+ */
+export function withoutIgnored(turns: readonly Turn[], ignored: readonly string[]): { turns: Turn[]; hidden: number } {
+  if (!ignored.length) return { turns: [...turns], hidden: 0 }
+  const skip = new Set(ignored)
+  let hidden = 0
+  const kept: Turn[] = []
+  for (const t of turns) {
+    const steps = t.steps.filter(s => !skip.has(s.path.toLowerCase()))
+    if (!steps.length) { hidden++; continue }
+    kept.push(steps.length === t.steps.length ? t : { ...t, steps })
+  }
+  return { turns: kept, hidden }
 }
 
 export type Placed = { step: Step; turn: Turn }
@@ -132,7 +170,8 @@ type ListOptions = { selected: string | null; width: number; narrow: boolean }
  */
 export function titleSegs(turn: Turn, now: number, liveId: string | null, selected: boolean, budget: number): Seg[] {
   const isLive = turn.id === liveId
-  const when = isLive ? 'Now' : formatAt(turn.at, now)
+  // The day is the header above the turn: the row has the clock alone.
+  const when = isLive ? 'Now' : clockOf(turn.at)
   const segs: Seg[] = []
   if (selected) segs.push({ t: '› ', c: 'claude', b: true })
   segs.push(isLive ? { t: when, c: 'claude', b: true, sh: TONE_SHIMMER.write } : { t: when, c: TIME_COLOR })
@@ -148,7 +187,7 @@ function summaryLine(els: Els, turn: Turn, isLive: boolean) {
   return (
     <Text wrap="wrap">
       {isLive ? <Text color="claude">working · </Text> : null}
-      <Text dimColor>{`${s.files} file${s.files === 1 ? '' : 's'} · ${s.edits} edit${s.edits === 1 ? '' : 's'} · `}</Text>
+      <Text dimColor>{`${filesText(turn)} · ${s.edits} edit${s.edits === 1 ? '' : 's'} · `}</Text>
       <Text color="success">{`+${s.add}`}</Text>
       <Text dimColor> </Text>
       <Text color="error">{`-${s.del}`}</Text>
@@ -157,7 +196,7 @@ function summaryLine(els: Els, turn: Turn, isLive: boolean) {
   )
 }
 
-function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now: number, liveId: string | null, opts: ListOptions) {
+function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now: number, liveId: string | null, opts: ListOptions, hidden = 0) {
   const { Box, Text, Button } = els
   const Client = 'Client' in els ? els.Client : undefined
   const { set } = actions
@@ -176,18 +215,22 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
   return (
     <Box key="timeline" flexDirection="column">
       <Box key="timeline-head" flexDirection="row" flexWrap="wrap" gap={1} marginBottom={1}>
-        <Text dimColor>{saved} turn{saved === 1 ? '' : 's'}{liveId ? ' · 1 running' : ''}</Text>
+        <Text dimColor>{saved} turn{saved === 1 ? '' : 's'}{liveId ? ' · 1 running' : ''}{hidden ? ` · ${hidden} hidden (git-ignored files)` : ''}</Text>
         <Button key="export" label="Export" hotkey="e" dimColor onPress={() => actions.exportAll()} />
       </Box>
-      {[...turns].reverse().map(turn => {
+      {[...turns].reverse().map((turn, k, newest) => {
         const isLive = turn.id === liveId
         const isSelected = turn.id === opts.selected
         const key = `turn-${turn.id}`
         const open = () => set({ turn: turn.id, file: null, step: 0 })
         const segs = titleSegs(turn, now, liveId, isSelected, budget)
         if (Client) rowPresses.set(key, open)
+        // A header where the day changes, as the card's TOUCHED caption is drawn.
+        const day = dayLabel(turn.at, now)
+        const newDay = k === 0 || dayLabel(newest[k - 1]!.at, now) !== day
         return (
           <Box key={`row-${turn.id}`} flexDirection="column" marginBottom={1}>
+            {newDay ? <Text size="caption" weight="semibold" dimColor>{day.toUpperCase()}</Text> : null}
             {/* A Client, as in the Files tree: a desktop Button drops the colours of the Text in it. */}
             {Client
               ? <Client key={key} module="./row.tsx" width="100%" props={{ segs, wrap: true, hoverAt: segs.length - 1 } satisfies RowProps} />
@@ -284,15 +327,18 @@ export const LIST_SHARE = 0.34
  * picked there, the latest one until something is picked.
  */
 export function historyView(
-  els: Els, turns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, width: number,
-  liveId: string | null = null,
+  els: Els, allTurns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, width: number,
+  liveId: string | null = null, ignored: readonly string[] = [],
 ) {
   const layout = layoutFor(width)
   const isTimeline = view.turn === null && view.file === null
+  // The timeline and a turn leave out files git ignores; a file asked for by name shows whole.
+  const { turns, hidden } = withoutIgnored(allTurns, ignored)
+  const stepTurns = (v: HistoryView) => (v.file !== null ? allTurns : turns)
   if (!layout.wide) {
     return isTimeline
-      ? timeline(els, turns, actions, now, liveId, { selected: null, width, narrow: layout.narrow })
-      : stepper(els, turns, view, actions, now, layout, liveId)
+      ? timeline(els, turns, actions, now, liveId, { selected: null, width, narrow: layout.narrow }, hidden)
+      : stepper(els, stepTurns(view), view, actions, now, layout, liveId)
   }
   const { Box, Text } = els
   const latest = turns.at(-1)?.id ?? null
@@ -301,11 +347,11 @@ export function historyView(
   return (
     <Box key="wide" flexDirection="row" gap={2}>
       <Box key="wide-list" width={`${Math.round(LIST_SHARE * 100)}%`} flexDirection="column">
-        {timeline(els, turns, actions, now, liveId, { selected: shown.file === null ? shown.turn : null, width: listWidth, narrow: listWidth < NARROW_COLUMNS })}
+        {timeline(els, turns, actions, now, liveId, { selected: shown.file === null ? shown.turn : null, width: listWidth, narrow: listWidth < NARROW_COLUMNS }, hidden)}
       </Box>
       <Box key="wide-step" flexGrow={1} flexDirection="column">
         {turns.length
-          ? stepper(els, turns, shown, actions, now, { ...layout, width: width - listWidth - 2 }, liveId)
+          ? stepper(els, stepTurns(shown), shown, actions, now, { ...layout, width: width - listWidth - 2 }, liveId)
           : <Text dimColor>Pick a turn on the left.</Text>}
       </Box>
     </Box>

@@ -138,6 +138,8 @@ declare module 'claude-code' {
       touched: TouchedFile[]
       /** The Files tab's head (tabs, card, search) in the pane's rows, as last measured from the wheel; null before. */
       head: number | null
+      /** The files of the history git ignores (lower-cased), left out of History. */
+      ignored: string[]
     }
   }
 }

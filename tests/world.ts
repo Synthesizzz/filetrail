@@ -12,7 +12,7 @@ export const KEY = 'p:c:/work/demo'
 export const DONE = { durationMs: 1, isAborted: false, reason: 'answer', text: '', answer: '' } as const
 
 /** What `git` answers: the repo's top, `status --porcelain=v1 -b -z` and `diff --numstat HEAD`. */
-export type GitWorld = { top: string; status: string; numstat: string; lsFiles?: string; show?: string }
+export type GitWorld = { top: string; status: string; numstat: string; lsFiles?: string; show?: string; ignored?: string }
 
 export type WorldOptions = {
   files?: Record<string, string>
@@ -92,6 +92,8 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     if (argv[1] === 'diff') return out(git.numstat)
     if (argv[1] === 'ls-files') return out(git.lsFiles ?? '')
     if (argv[1] === 'show') return out(git.show ?? '')
+    // check-ignore names the paths it was given that git ignores: exit 1 when none is.
+    if (argv[1] === 'check-ignore') return out(git.ignored ?? '', git.ignored ? 0 : 1)
     return out('', 1)
   })
   const scrolls: unknown[] = []
