@@ -237,7 +237,7 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
               : (
                 <Button key={key} plain onPress={open}>
                   {isSelected ? '› ' : ''}
-                  <Text wrap="wrap" {...(isLive ? { color: 'claude' as const } : {})} {...(isLive || isSelected ? { bold: true } : {})}>{title(turn)}</Text>
+                  <Text wrap="wrap" {...(isLive ? { color: 'claude' as const } : {})} {...(isLive || isSelected ? { weight: 'semibold' as const } : {})}>{title(turn)}</Text>
                 </Button>
               )}
             {summaryLine(els, turn, isLive)}
@@ -282,17 +282,17 @@ function stepper(
         {view.file !== null && <Button key="to-turn" label="This turn" hotkey="t" dimColor onPress={() => set({ turn: turn.id, file: null, step: turn.steps.indexOf(step) })} />}
         <Button key="close" label="Close" hotkey="c" role="dismiss" dimColor onPress={() => actions.close()} />
       </Box>
-      <Text bold wrap="wrap">{header}</Text>
+      <Text weight="semibold" wrap="wrap">{header}</Text>
       <Box key="strip" flexDirection="row" flexWrap="wrap" gap={0}>
         {steps.map((_, n) => (
           <Button key={`cell-${n}`} plain {...(n === k ? {} : { dimColor: true })} onPress={() => go(n)}>{n === k ? `[${n + 1}]` : ` ${n + 1} `}</Button>
         ))}
       </Box>
-      <Text bold>step {k + 1} of {steps.length}</Text>
+      <Text weight="semibold">step {k + 1} of {steps.length}</Text>
       <Box key="file-row" flexDirection="row" flexWrap="wrap" gap={2}>
         {/* Narrow, the file name leads: a path cut at the end loses the part that matters. */}
         {layout.narrow
-          ? <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}><Text bold>{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}</Button>
+          ? <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}><Text weight="semibold">{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}</Button>
           : <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}>{step.rel}</Button>}
         <Button key="reveal" label="Show in Files" hotkey="o" dimColor onPress={() => actions.reveal(step.path)} />
         <Button key="view-file" label="View file" hotkey="v" dimColor onPress={() => actions.view(step.path, step.line)} />

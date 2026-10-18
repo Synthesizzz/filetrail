@@ -131,7 +131,7 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
     const style = {
       ...(s.c ? { color: s.c } : {}),
       ...(s.bg ? { backgroundColor: s.bg } : {}),
-      ...(s.b ? { bold: true } : {}),
+      ...(s.b ? { weight: 'semibold' as const } : {}),
       ...(s.u || (hover && i === hoverAt) ? { underline: true } : {}),
       ...(s.dim ? { dimColor: true } : {}),
       ...(s.mono || props.mono ? { mono: true } : {}),

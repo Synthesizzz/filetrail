@@ -184,7 +184,7 @@ test('a Write lights up once it went through; a denied one does not', async ($, 
   expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toMatch(/README\.md · writing ●1$/)
   // The name and the word carry the tone's colour, drawn by the row's Client.
   const runs = await rowRuns(ui, rowKey('C:/work/demo/README.md'))
-  expect(runs.find(r => r.text === 'README.md')?.props).toMatchObject({ color: 'claude', bold: true })
+  expect(runs.find(r => r.text === 'README.md')?.props).toMatchObject({ color: 'claude', weight: 'semibold' })
   expect(runs.find(r => r.text === ' · writing')?.props.color).toBe('claude')
   await ui.unmount()
 })
@@ -234,7 +234,7 @@ test('Files to History and back: a file\'s history, then Show in Files', async (
   expect(await ui.find({ key: rowKey('C:/work/demo/src/a.ts') })).toBeDefined()
   // Selected: bold, and its row filled.
   const name = (await rowRuns(ui, rowKey('C:/work/demo/src/a.ts'))).find(r => r.text === 'a.ts')
-  expect(name?.props.bold).toBe(true)
+  expect(name?.props.weight).toBe('semibold')
   expect(((await ui.find({ key: rowKey('C:/work/demo/src/a.ts') }))?.props as any)?.props?.bg).toBe(SELECTED_BG)
   await ui.unmount()
 })

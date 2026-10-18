@@ -76,7 +76,7 @@ function searchResults(els: Els, query: string, index: SearchIndex | null, actio
         const { name, dir } = splitPath(rel)
         return (
           <Button key={`hit-${rel.toLowerCase()}`} plain onPress={() => actions.openHit(rel)}>
-            <Text bold>{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}
+            <Text weight="semibold">{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}
           </Button>
         )
       })}
@@ -149,7 +149,7 @@ function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry
   const Client = 'Client' in els ? els.Client : undefined
   const chip = (key: string, runs: { t: string; c?: string; b?: boolean; dim?: boolean }[]) => (
     <Text key={key} backgroundColor={CHIP_BG}>
-      {[{ t: NBSP }, ...runs, { t: NBSP }].map(r => <Text {...(r.c ? { color: r.c } : {})} {...(r.b ? { bold: true } : {})} {...(r.dim ? { dimColor: true } : {})}>{r.t}</Text>)}
+      {[{ t: NBSP }, ...runs, { t: NBSP }].map(r => <Text {...(r.c ? { color: r.c } : {})} {...(r.b ? { weight: 'semibold' as const } : {})} {...(r.dim ? { dimColor: true } : {})}>{r.t}</Text>)}
     </Text>
   )
   const b = git?.branch
@@ -335,7 +335,7 @@ export function filesView(
       {nowCard(els, root, listing, last, flash, touchedSection(els, root, touched, flash, files.touchedOpen === true, actions), [
           <Box key="name-line" flexDirection="row" gap={1} minWidth={0}>
             <Box key="name-box" flexShrink={1} minWidth={0}>
-              <Text bold color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
+              <Text weight="semibold" color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
             </Box>
             {/* filetree's header buttons, its plain Unicode glyphs. A Client draws them where it can, so
                 hovering one says what it does (a desktop Button has no tooltip); Buttons elsewhere. */}
@@ -361,7 +361,7 @@ export function filesView(
       {files.selected !== null ? (
         <Box key="selected" flexDirection="row" flexWrap="wrap" gap={1}>
           <Text color="claude">Claude sees</Text>
-          <Text bold wrap="truncate-end">{splitPath(relTo(root, files.selected)).name}</Text>
+          <Text weight="semibold" wrap="truncate-end">{splitPath(relTo(root, files.selected)).name}</Text>
           {splitPath(relTo(root, files.selected)).dir ? <Text dimColor wrap="truncate-start">{splitPath(relTo(root, files.selected)).dir}</Text> : null}
           {/* No hotkey: the desktop draws its chip beside the label, which read as "X ✕" (seen live). */}
           <Button key="unselect" label="✕" plain dimColor onPress={() => actions.unselect()} />
@@ -444,7 +444,7 @@ export function filesView(
         // Surfaces without a Client: a plain Button, which may not paint the colours.
         return (
           <Button key={key} plain onPress={press}>
-            {segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.b ? { bold: true } : {})} {...(s.u ? { underline: true } : {})} {...(s.dim ? { dimColor: true } : {})} {...(s.mono ? { mono: true } : {})}>{s.t}</Text>)}
+            {segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.b ? { weight: 'semibold' as const } : {})} {...(s.u ? { underline: true } : {})} {...(s.dim ? { dimColor: true } : {})} {...(s.mono ? { mono: true } : {})}>{s.t}</Text>)}
           </Button>
         )
       })}

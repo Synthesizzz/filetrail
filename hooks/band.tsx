@@ -23,7 +23,7 @@ export function hintRow(els: Els, hint: Hint, replay: () => void) {
   const { Box, Text, Button } = els
   return (
     <Box key="filetrail-hint" flexDirection="row" gap={2} paddingX={1}>
-      <Text color="claude" bold>{hintText(hint)}</Text>
+      <Text color="claude" weight="semibold">{hintText(hint)}</Text>
       <Button key="replay" label="Replay" hotkey="r" onPress={replay} />
     </Box>
   )

@@ -39,7 +39,7 @@ const Tools: ClientModule<ToolsProps, Local> = (props, surface) => {
       <Box flexGrow={1} />
       {hint ? <Box flexShrink={1} overflow="hidden"><Text dimColor wrap="truncate-end">{hint}</Text></Box> : null}
       {props.tools.map((t, i) => (
-        <Text mono {...(i === hover ? { bold: true } : { dimColor: true })}>{` ${t.glyph} `}</Text>
+        <Text mono {...(i === hover ? { weight: 'semibold' as const } : { dimColor: true })}>{` ${t.glyph} `}</Text>
       ))}
     </Box>
   )

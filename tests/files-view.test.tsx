@@ -129,7 +129,7 @@ test('a file row can be selected, with a marker every surface shows', async ($, 
   expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ ■ src\//)
   // Its name is bold, its row filled, and the line under the header names it.
   const name = (await rowRuns(ui, rowKey('C:/work/demo/README.md'))).find(r => r.text === 'README.md')
-  expect(name?.props.bold).toBe(true)
+  expect(name?.props.weight).toBe('semibold')
   expect(((await ui.find({ key: rowKey('C:/work/demo/README.md') }))?.props as any)?.props?.bg).toBe(SELECTED_BG)
   expect(((await ui.find({ key: rowKey('C:/work/demo/src') }))?.props as any)?.props?.bg).toBeUndefined()
   expect((await ui.findAll({ type: 'Text' })).filter(t => t.text === 'README.md').length).toBe(1)

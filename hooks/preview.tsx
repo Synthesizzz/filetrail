@@ -67,7 +67,7 @@ export function previewView(els: Els, root: string, preview: Preview, actions: P
     <Box key="preview" flexDirection="column" gap="xs">
       <Box key="preview-bar" flexDirection="row" flexWrap="wrap" gap={1}>
         <Button key="preview-back" label="← files" plain dimColor onPress={() => actions.back()} />
-        <Text bold {...(lit ? { color: lit } : {})} wrap="truncate-end">{name}</Text>
+        <Text weight="semibold" {...(lit ? { color: lit } : {})} wrap="truncate-end">{name}</Text>
         {dir ? <Text dimColor wrap="truncate-start">{dir}</Text> : null}
         <Box flexGrow={1} />
         <Button key="preview-open" label="↗" plain dimColor onPress={() => actions.open(preview.path)} />
