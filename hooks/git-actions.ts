@@ -3,33 +3,33 @@
 // A guess from the command's words alone, as hooks/bash.ts is. No engine calls here.
 // The verbs, their words and their tones follow the filetree mod (MIT); see NOTICE.
 
-import type { GitActionKind } from '../types'
+import type { GitActionKind, GitIcon, GitPose } from '../types'
 import { splitCommands, tokenize, toPath } from './bash'
 import { normPath } from './history'
 
 /** How many finished actions the bar keeps, newest last. */
 export const MAX_ACTIONS = 3
 
-type Verb = { verb: string; running: string; done: string; kind: GitActionKind }
+type Verb = { verb: string; running: string; done: string; kind: GitActionKind; icon: GitIcon; pose?: GitPose }
 
-/** The git subcommands the bar shows, with the words for them and their colour. */
+/** The git subcommands the bar shows, with the words for them, their colour, their icon and the crab's pose. */
 const GIT_VERBS: Record<string, Verb> = {
-  commit: { verb: 'commit', running: 'committing', done: 'committed', kind: 'save' },
-  push: { verb: 'push', running: 'pushing', done: 'pushed', kind: 'sync' },
-  pull: { verb: 'pull', running: 'pulling', done: 'pulled', kind: 'fetch' },
-  fetch: { verb: 'fetch', running: 'fetching', done: 'fetched', kind: 'fetch' },
-  checkout: { verb: 'checkout', running: 'checking out', done: 'checked out', kind: 'branch' },
-  switch: { verb: 'switch', running: 'switching', done: 'switched', kind: 'branch' },
-  merge: { verb: 'merge', running: 'merging', done: 'merged', kind: 'merge' },
-  rebase: { verb: 'rebase', running: 'rebasing', done: 'rebased', kind: 'merge' },
-  stash: { verb: 'stash', running: 'stashing', done: 'stashed', kind: 'stash' },
+  commit: { verb: 'commit', running: 'committing', done: 'committed', kind: 'save', icon: 'commit' },
+  push: { verb: 'push', running: 'pushing', done: 'pushed', kind: 'sync', icon: 'push', pose: 'push' },
+  pull: { verb: 'pull', running: 'pulling', done: 'pulled', kind: 'fetch', icon: 'pull' },
+  fetch: { verb: 'fetch', running: 'fetching', done: 'fetched', kind: 'fetch', icon: 'pull' },
+  checkout: { verb: 'checkout', running: 'checking out', done: 'checked out', kind: 'branch', icon: 'branch' },
+  switch: { verb: 'switch', running: 'switching', done: 'switched', kind: 'branch', icon: 'branch' },
+  merge: { verb: 'merge', running: 'merging', done: 'merged', kind: 'merge', icon: 'merge', pose: 'merge' },
+  rebase: { verb: 'rebase', running: 'rebasing', done: 'rebased', kind: 'merge', icon: 'merge', pose: 'merge' },
+  stash: { verb: 'stash', running: 'stashing', done: 'stashed', kind: 'stash', icon: 'stash' },
 }
 
 /** `gh pr` subcommands: one word each. */
 const PR_VERBS: Record<string, Verb> = {
-  create: { verb: 'PR create', running: 'opening a PR', done: 'opened a PR', kind: 'merge' },
-  merge: { verb: 'PR merge', running: 'merging the PR', done: 'merged the PR', kind: 'merge' },
-  checkout: { verb: 'PR checkout', running: 'checking out the PR', done: 'checked out the PR', kind: 'branch' },
+  create: { verb: 'PR create', running: 'opening a PR', done: 'opened a PR', kind: 'merge', icon: 'pr' },
+  merge: { verb: 'PR merge', running: 'merging the PR', done: 'merged the PR', kind: 'merge', icon: 'merge', pose: 'merge' },
+  checkout: { verb: 'PR checkout', running: 'checking out the PR', done: 'checked out the PR', kind: 'branch', icon: 'pr' },
 }
 
 /** git's own flags that take the next word as their value, before the subcommand. */

@@ -3,11 +3,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitInfo, Hint, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
+import type { DeletedBy, Entry, FilesView, GitActionEntry, GitInfo, GitStage, Hint, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, GLIDE_MS, HOLD_MS, clampTop, foldersTo, glide, targetOf, topFor, treeLines, treeRows, treeWindow } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
-import { isCommit, readTargets } from './bash'
+import { deleteTargets, isCommit, readTargets } from './bash'
 import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
@@ -17,9 +17,10 @@ import { spelled } from './now-card'
 import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
+import { NO_SVG } from './octicons'
 import { pageOf, pageText, PAGE_LINES, refusal } from './preview'
 import {
-  addTurn, byteSize, BUDGET_BYTES, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
+  addTurn, byteSize, BUDGET_BYTES, deleteStep, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
   isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
 } from './history'
 import type { EditCall, StoreIndex } from './history'
@@ -41,6 +42,7 @@ const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | 
 const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | null)
 const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as SearchIndex | null)
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
+const stage = atom({ plugin: 'filetrail', key: 'stage' } as const, null as GitStage | null)
 const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as Preview | null)
 const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as TouchedFile[])
 /** The files of the history git ignores (lower-cased): History leaves them out. */
@@ -276,10 +278,11 @@ async function touch($: EngineInterface, target: Target) {
   }
   await update($, flash, f => ({ ...f, [k]: target.tone }))
   await update($, last, () => ({ path: k, tone: target.tone }))
-  // A file read, written or committed joins the Claude touched list (a searched folder does not).
-  if (target.follow || target.tone === 'commit') {
+  // A file read, written, committed or deleted joins the Claude touched list (a searched folder does not).
+  if (target.follow || target.tone === 'commit' || target.tone === 'delete') {
     const at = await $.clock.now()
-    await update($, touched, list => [{ path: normPath(target.path), tone: target.tone, at }, ...list.filter(f => lower(f.path) !== k)].slice(0, MAX_TOUCHED))
+    const entry: TouchedFile = { path: normPath(target.path), tone: target.tone, at, ...(target.by ? { by: target.by } : {}) }
+    await update($, touched, list => [entry, ...list.filter(f => lower(f.path) !== k)].slice(0, MAX_TOUCHED))
   }
   flashTimers.get(k)?.cancel()
   flashTimers.set(k, $.clock.after(target.follow ? HOLD_MS : FLASH_MS, () => {
@@ -317,6 +320,109 @@ async function lightReads($: EngineInterface, command: string) {
   }
 }
 
+/** Files of one delete recorded at most, with the text of each kept: a wide `rm -r` should not fill the history. */
+const MAX_DELETE_FILES = 50
+/** Deletions the refresh finds this soon after a turn ended were Claude's (a command not read as a delete). */
+const AFTER_TURN_MS = 5000
+/** Paths (lower-cased) recorded as deleted, so the listing and git do not record them again; a path seen again leaves. */
+const gone = new Set<string>()
+/** When the last main-loop turn ended, and that turn (its steps saved, or none). */
+let turnEndedAt = -Infinity
+let lastTurn: Turn | null = null
+let deleteCount = 0
+
+type Doomed = { path: string; text: string | null }
+
+/** A file's text to keep once it is deleted; null for a binary or large one, or one that cannot be read. */
+async function copyOf($: EngineInterface, path: string): Promise<string | null> {
+  try {
+    const text = String(await $.fs.read(path))
+    return refusal(text) ? null : text
+  } catch {
+    return null
+  }
+}
+
+/** The files at `path`: itself, or the files under it when it is a folder, MAX_DELETE_FILES at most. */
+async function filesAt($: EngineInterface, path: string, out: string[] = []): Promise<string[]> {
+  let listed: Entry[]
+  try { listed = toEntries(path, await $.fs.list(path)).entries } catch { out.push(normPath(path)); return out }
+  for (const e of listed) {
+    if (out.length >= MAX_DELETE_FILES) break
+    if (e.kind === 'dir') await filesAt($, e.path, out)
+    else out.push(e.path)
+  }
+  return out
+}
+
+/** What a Bash command is about to delete in the project, with the text of each file, read before it goes. */
+async function doomedBy($: EngineInterface, command: string): Promise<Doomed[]> {
+  const out: Doomed[] = []
+  for (const p of deleteTargets(command, root)) {
+    if (!isInside(root, p) || !(await $.fs.exists(p))) continue
+    for (const f of await filesAt($, p)) {
+      if (out.length >= MAX_DELETE_FILES) return out
+      out.push({ path: f, text: await copyOf($, f) })
+    }
+  }
+  return out
+}
+
+/** Takes the paths not yet recorded as deleted and marks them so, before any await: two finders never record one twice. */
+function claim<T extends { path: string }>(items: readonly T[]): T[] {
+  const mine = items.filter(i => !gone.has(lower(i.path)))
+  for (const i of mine) gone.add(lower(i.path))
+  return mine
+}
+
+/**
+ * Records deleted files: a step each in History, their text kept as removed lines, and
+ * a row in the card's touched list saying who deleted them. Claude's go in the running
+ * turn (or the one that just ended); the person's in a turn of their own.
+ */
+async function recordDeleted($: EngineInterface, items: readonly Doomed[], by: DeletedBy) {
+  if (!items.length) return
+  const at = await $.clock.now()
+  const steps = items.map((i, k) => deleteStep(i.path, root, i.text, by, at, `d${at}.${deleteCount++}.${k}`))
+  if (by === 'claude' && pending) {
+    pending.steps.push(...steps)
+    await showLive($)
+  } else if (by === 'claude' && lastTurn && at - turnEndedAt < AFTER_TURN_MS) {
+    lastTurn = { ...lastTurn, steps: [...lastTurn.steps, ...steps] }
+    await saveTurn($, lastTurn)
+  } else {
+    await saveTurn($, { id: `d${at}`, at, prompt: by === 'you' ? 'Deleted outside Claude' : 'Deleted', steps })
+  }
+  for (const i of items) await touch($, { path: i.path, tone: 'delete', follow: false, by })
+}
+
+/** Who deleted files found gone by a refresh: Claude while its turn runs or just after, the person otherwise. */
+async function deleterNow($: EngineInterface): Promise<DeletedBy> {
+  return pending || (await $.clock.now()) - turnEndedAt < AFTER_TURN_MS ? 'claude' : 'you'
+}
+
+/**
+ * Records files found gone by a refresh (the listing, git): their text from git's HEAD
+ * when tracked, as they are already gone from the disk. A path still there is let be.
+ */
+async function recordFoundGone($: EngineInterface, paths: readonly string[]) {
+  const mine = claim(paths.map(path => ({ path })))
+  const items: Doomed[] = []
+  for (const { path } of mine) {
+    if (await $.fs.exists(path)) { gone.delete(lower(path)); continue }
+    items.push({ path, text: await headCopy($, path) })
+  }
+  await recordDeleted($, items, await deleterNow($))
+}
+
+/** A tracked file's text at HEAD, for a file deleted outside a command Claude ran; null when untracked. */
+async function headCopy($: EngineInterface, path: string): Promise<string | null> {
+  if (!isRepo || !isInside(root, path)) return null
+  const shown = await $.process.run(['git', 'show', `HEAD:./${relTo(root, path)}`], { cwd: root, timeoutMs: 10_000 })
+  if (shown.exitCode !== 0) return null
+  return refusal(shown.stdout) ? null : shown.stdout
+}
+
 /** After a commit went through, lights the files it holds in the commit's green. */
 async function lightCommit($: EngineInterface) {
   const shown = await $.process.run(['git', 'show', '--name-only', '--format=', '--relative', 'HEAD'], { cwd: root, timeoutMs: 10_000 })
@@ -328,14 +434,30 @@ async function lightCommit($: EngineInterface) {
 
 async function listDir($: EngineInterface, dir: string) {
   let entries: Entry[] = []
+  let listedOk = false
+  let more = 0
   try {
     const listed = toEntries(dir, await $.fs.list(dir))
     entries = listed.entries
+    more = listed.more
+    listedOk = true
     if (listed.more) $.ui.log(`filetrail: ${dir} shows ${entries.length} entries; ${listed.more} more are left out`)
   } catch (err) {
     $.ui.log(`filetrail: could not list ${dir}: ${String(err)}`)
   }
+  const before = (await read($, listing))[lower(dir)]
   await update($, listing, l => ({ ...l, [lower(dir)]: entries }))
+  // A file the last listing had and this one has not was deleted, by Claude or the person.
+  // Not when the listing failed or was cut short (rows missing for no deletion), nor when
+  // another file came in the same folder at once: that is likely a rename, not a delete.
+  if (!before || !listedOk || more) return
+  for (const e of entries) gone.delete(lower(e.path))
+  const now = new Set(entries.map(e => lower(e.path)))
+  const was = new Set(before.map(e => lower(e.path)))
+  const vanished = before.filter(e => e.kind === 'file' && !now.has(lower(e.path)))
+  if (vanished.length && !entries.some(e => !was.has(lower(e.path)))) {
+    await recordFoundGone($, vanished.map(e => e.path)).catch(err => $.ui.log(`filetrail: a deletion was not recorded: ${String(err)}`))
+  }
 }
 
 /**
@@ -375,7 +497,20 @@ async function refreshGit($: EngineInterface) {
     ...parseStatus(status.exitCode === 0 ? status.stdout : ''),
     numstat: numstat.exitCode === 0 ? parseNumstat(numstat.stdout) : {},
   }
+  const prev = await read($, git)
   await update($, git, () => info)
+  // A tracked file newly deleted since the last read was deleted by Claude or the person; it
+  // may sit in a closed folder the listing does not watch. Not on the first read: what was
+  // deleted before the session is not this session's. git spells the paths for HEAD.
+  if (prev && status.exitCode === 0) {
+    const fresh = Object.entries(info.status).filter(([rel, code]) => code === 'D' && prev.status[rel] !== 'D').map(([rel]) => rel)
+    if (fresh.length) {
+      const listed = await $.process.run(['git', 'ls-files', '--deleted', '-z', '--full-name'], opts)
+      const spelled = listed.exitCode === 0 ? listed.stdout.split('\0').filter(Boolean) : []
+      const paths = spelled.filter(rel => fresh.includes(lower(rel))).map(rel => joinPath(info.top, rel)).filter(p => isInside(root, p))
+      await recordFoundGone($, paths).catch(err => $.ui.log(`filetrail: a deletion was not recorded: ${String(err)}`))
+    }
+  }
   await refreshIgnored($)
 }
 
@@ -500,13 +635,38 @@ async function startGitActions($: EngineInterface, command: string): Promise<str
   const at = await $.clock.now()
   const added: GitActionEntry[] = calls.map((c, i) => ({ id: `g${at}.${gitCount++}.${i}`, ...c, state: 'running', at }))
   await update($, gitLog, list => [...list, ...added].slice(-MAX_ACTIONS))
+  // The crab acts out the last push or merge of the command while it runs.
+  const acted = [...added].reverse().find(a => a.pose)
+  if (acted?.pose) {
+    stageTimer?.cancel()
+    stageTimer = null
+    stageId = acted.id
+    await update($, stage, () => ({ pose: acted.pose!, state: 'running', target: acted.target }))
+  }
   return added.map(a => a.id)
 }
+
+/** The bar entry the crab acts out, and the timer that puts it down FLASH_MS after it is done. */
+let stageId: string | null = null
+let stageTimer: { cancel: () => void } | null = null
 
 /** Marks the bar's running actions done, failed or denied, as the command came out. */
 async function finishGitActions($: EngineInterface, ids: readonly string[], outcome: StepStatus): Promise<void> {
   const state: GitActionEntry['state'] = outcome === 'denied' ? 'denied' : outcome === 'failed' ? 'failed' : 'ok'
   await update($, gitLog, list => list.map(a => (ids.includes(a.id) ? { ...a, state } : a)))
+  if (!stageId || !ids.includes(stageId)) return
+  // Done: the crab keeps the pose a moment as the pill says so. Failed or denied: it stops at once.
+  if (state === 'ok') {
+    await update($, stage, s => (s ? { ...s, state: 'ok' as const } : s))
+    stageTimer = $.clock.after(FLASH_MS, () => {
+      stageId = null
+      stageTimer = null
+      void update($, stage, () => null).catch(() => undefined)
+    })
+  } else {
+    stageId = null
+    await update($, stage, () => null)
+  }
 }
 
 /**
@@ -543,6 +703,8 @@ export const register: Register = on => {
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
     // A reload forgets the running turn's steps, so a Now row left in state would never be saved.
     await update($, live, () => null)
+    // Nor would a push or merge left acting in state ever be put down: its timer is gone.
+    await update($, stage, () => null)
     // The head measured in an earlier session, unless this one measured it already.
     const kept = await $.store.get(HEAD_KEY)
     if (typeof kept === 'number' && (await read($, headRows)) === null) await update($, headRows, () => kept)
@@ -573,7 +735,21 @@ export const register: Register = on => {
       const command = String((e as unknown as { command?: unknown }).command ?? '')
       await lightReads($, command).catch(err => $.ui.log(`filetrail: Bash highlight failed: ${String(err)}`))
       const ids = await startGitActions($, command).catch(err => { $.ui.log(`filetrail: the git bar did not update: ${String(err)}`); return [] as string[] })
+      // What the command is about to delete, with each file's text, read while it is still there.
+      const doomed = await doomedBy($, command).catch(err => { $.ui.log(`filetrail: a deletion was not read: ${String(err)}`); return [] as Doomed[] })
       const r = await next(e)
+      if (doomed.length) {
+        try {
+          const goneNow: Doomed[] = []
+          for (const d of doomed) if (!(await $.fs.exists(d.path))) goneNow.push(d)
+          await recordDeleted($, claim(goneNow), 'claude')
+          // The tree drops the rows: list again the folders on show that held them.
+          const shown = await read($, listing)
+          for (const dir of new Set(goneNow.map(d => parentOf(d.path)))) if (lower(dir) in shown) await listDir($, dir)
+        } catch (err) {
+          $.ui.log(`filetrail: a deletion was not recorded: ${String(err)}`)
+        }
+      }
       // A folder found not to be a repo is asked again once one is made in it.
       if (makesRepo(command)) { isRepo = null; scheduleGit($) }
       if (ids.length) {
@@ -624,6 +800,9 @@ export const register: Register = on => {
     if (e.agentId !== undefined) return r
     const turn = pending
     pending = null
+    // Deletions the refresh below finds were Claude's, and go in this turn.
+    turnEndedAt = await $.clock.now()
+    lastTurn = turn
     if (turn && turn.steps.length) {
       try { await saveTurn($, turn) } catch (err) { $.ui.log(`filetrail: history was not saved: ${String(err)}`) }
       // The band offers this turn until it is replayed or another turn changes files.
@@ -758,7 +937,10 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    // The terminal's table carries an Svg that draws nothing (seen in the test kit: an empty
+    // Box): left out there, the crab falls back to its blocks and the branch to its glyph.
     const els = $.ui.resolve(e)
+    if (e.surface === 'terminal') NO_SVG.add(els)
     // Where the pane's window stands, the tree's room under the head, and the lines it
     // will draw: what the ui.scroll hook measures the head against.
     pane.windowAt = e.props.scroll.offset
@@ -848,7 +1030,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), pane.fit)
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), pane.fit, await read($, stage))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

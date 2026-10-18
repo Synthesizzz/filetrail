@@ -27,12 +27,45 @@ its double-click and right-click on a row, and showing a file in the pane
 hooks/crab.ts draws the crab on the grid of the crab in the token-usage mod, by the
 same author, after the creature in Claude Code's banner.
 
+hooks/octicons.ts holds the 16px paths of seven Octicons (git-branch, git-merge,
+git-commit, repo-push, repo-pull, git-pull-request, stack), drawn beside the branch
+and the git actions as GitHub draws them:
+
+  Octicons (@primer/octicons 19.8.0), Copyright (c) 2023 GitHub Inc. MIT License.
+  https://github.com/primer/octicons
+
+The path data is unchanged except that every number is written out in full and
+separated by spaces (the engine scrubs an Svg's markup each time it draws one, and
+the compact form, as in ".75.75", made that scrub slow).
+
 The rest of filetrail is written from scratch. Its file tree was also inspired
 by the feature set of claude-code-filetree.
 
 MIT License (claude-code-filetree)
 
 Copyright (c) 2026 Kurt Buhler
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+MIT License (Octicons)
+
+Copyright (c) 2023 GitHub Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

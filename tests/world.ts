@@ -24,11 +24,13 @@ export type WorldOptions = {
   git?: GitWorld
   /** Environment variables the mod may read (HOME, USERPROFILE). */
   env?: Record<string, string>
+  /** Runs as a Bash command does, before it answers: a test deletes files here. */
+  onBash?: (command: string) => void
 }
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {} }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash }: WorldOptions = {}) {
   mock.env(on, env)
   // The engine makes a written path absolute for this machine before the hook sees it
   // ('/home/x' arrives as 'C:\home\x' on Windows): kept here with forward slashes.
@@ -68,6 +70,7 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     if (String(e.file_path).endsWith('broken.ts')) return { result: 'old_string not found', isError: true }
     // A Bash command with "--fail" in it ends with an error, as a non-zero exit does.
     if (e.tool === 'Bash' && String(e.command).includes('--fail')) return { result: 'exit 1', isError: true }
+    if (e.tool === 'Bash') onBash?.(String(e.command))
     return { result: 'ok' }
   })
   const listed = Object.fromEntries(Object.entries(dirs).map(([d, kids]) => [key(d), kids]))
@@ -112,7 +115,7 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     copies.push({ text: e.text, surface: e.surface })
     return { value: { isCopied: true } }
   })
-  return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes, copies }
+  return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes, copies, listed }
 }
 
 /** Text with the non-breaking spaces the mod draws (indents, diff lines, narrow ones in a row) read as plain ones. */

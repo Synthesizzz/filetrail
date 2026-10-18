@@ -1,4 +1,4 @@
-// Reading a Bash command for the files it reads, and whether it commits.
+// Reading a Bash command for the files it reads, the ones it deletes, and whether it commits.
 // A guess from the command's words alone: anything unclear is skipped rather
 // than lit in the wrong place. No engine calls here.
 
@@ -143,4 +143,44 @@ export function isCommit(command: string): boolean {
     }
     return false
   })
+}
+
+/** Commands that delete the paths they name. */
+const DELETERS = new Set(['rm', 'del', 'erase', 'rd', 'rmdir', 'unlink', 'remove-item', 'ri'])
+/** PowerShell flags of Remove-Item whose value is not the path. */
+const REMOVE_VALUES = new Set(['-include', '-exclude', '-filter', '-credential', '-stream'])
+
+/**
+ * The paths a command deletes (rm, del, Remove-Item, git rm without --cached), in order.
+ * Stops at a `cd` and skips a word built at run time or a glob, as readTargets does: the
+ * caller still checks each one is gone after the command, so a guess never records a
+ * file that is still there.
+ */
+export function deleteTargets(command: string, root: string): string[] {
+  const out: string[] = []
+  for (const segment of splitCommands(command)) {
+    const words = tokenize(segment)
+    if (!words) continue
+    while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) words.shift()
+    if (!words.length) continue
+    const prog = programOf(words[0]!)
+    if (prog === 'cd' || prog === 'pushd' || prog === 'set-location') break
+    let args = words.slice(1)
+    if (prog === 'git') {
+      // git's own flags before the subcommand move it elsewhere: not this root's paths then.
+      if (args[0] !== 'rm' || args.includes('--cached')) continue
+      args = args.slice(1)
+    } else if (!DELETERS.has(prog)) continue
+    for (let k = 0; k < args.length; k++) {
+      const w = args[k]!
+      const flag = w.toLowerCase()
+      if (PATH_FLAGS.has(flag)) { if (args[k + 1]) { const p = toPath(root, args[++k]!); if (p) out.push(p) } continue }
+      if (REMOVE_VALUES.has(flag)) { k++; continue }
+      // cmd's switches are /q, /s; a path never starts that way on Windows, but Git Bash spells /c/... paths.
+      if (w.startsWith('-') || (/^\/[a-zA-Z]$/.test(w) && (prog === 'del' || prog === 'erase' || prog === 'rd' || prog === 'rmdir'))) continue
+      const p = toPath(root, w)
+      if (p) out.push(p)
+    }
+  }
+  return out
 }

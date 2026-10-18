@@ -3,7 +3,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitActionKind, GitInfo, Preview, SearchIndex, Tone, TouchedFile, Turn } from '../types'
+import type { Entry, FilesView, GitActionEntry, GitActionKind, GitIcon, GitInfo, GitStage, Preview, SearchIndex, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
@@ -13,6 +13,7 @@ import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import type { Tool, ToolsProps } from './tools'
 import { NOW_STYLE, nowCard } from './now-card'
+import { octicon, svgOf } from './octicons'
 import { previewView } from './preview'
 import type { PreviewActions } from './preview'
 import { findFiles } from './search'
@@ -99,8 +100,8 @@ export function stepCount(turns: readonly Turn[], path: string): number {
  * mid-dark enough to read on light and dark backgrounds alike.
  */
 export const READ_COLOR = '#8b5cf6'
-export const TONE_COLOR: Record<Tone, string> = { read: READ_COLOR, write: 'claude', commit: 'success' }
-export const TONE_WORD: Record<Tone, string> = { read: 'reading', write: 'writing', commit: 'committed' }
+export const TONE_COLOR: Record<Tone, string> = { read: READ_COLOR, write: 'claude', commit: 'success', delete: 'error' }
+export const TONE_WORD: Record<Tone, string> = { read: 'reading', write: 'writing', commit: 'committed', delete: 'deleted' }
 /**
  * The shimmer's palette per tone, base to brightest: a bright band sweeps across a lit
  * name and its word, as if being typed (the band and these steps follow filetree, MIT).
@@ -110,6 +111,7 @@ export const TONE_SHIMMER: Record<Tone, string[]> = {
   read: [READ_COLOR, '#a78bfa', '#c4b5fd', '#ede9fe'],
   write: ['#d97757', '#e8956f', '#f2b394', '#fde1d3'],
   commit: ['#22c55e', '#4ade80', '#86efac', '#dcfce7'],
+  delete: ['#ef4444', '#f87171', '#fca5a5', '#fee2e2'],
 }
 
 /** The git bar's palette per kind of action, base to brightest (filetree's tones, MIT). */
@@ -138,6 +140,17 @@ export function gitActionSegs(a: GitActionEntry): Seg[] {
 
 /** A chip's fill: a faint grey that reads on light and dark backgrounds alike. */
 export const CHIP_BG = '#80808026'
+/** The branch icon's grey, GitHub's muted foreground, which reads on light and dark backgrounds alike. */
+export const ICON_MUTED = '#808a96'
+/** The branch glyph where the surface has no Svg (the terminal). */
+export const BRANCH_GLYPH = '⎇'
+
+/** A git action's icon colour: its kind's while it runs or once done, red when it failed, grey when denied. */
+export function actionIconColor(a: GitActionEntry): string {
+  if (a.state === 'failed') return '#ef4444'
+  if (a.state === 'denied') return ICON_MUTED
+  return KIND_SHIMMER[a.kind][0]!
+}
 
 /**
  * The branch and git as chips in the card's title bar: the branch with commits ahead
@@ -147,19 +160,35 @@ export const CHIP_BG = '#80808026'
 function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry[], open: boolean, actions: FilesActions) {
   const { Box, Text, Button } = els
   const Client = 'Client' in els ? els.Client : undefined
-  const chip = (key: string, runs: { t: string; c?: string; b?: boolean; dim?: boolean }[]) => (
-    <Text key={key} backgroundColor={CHIP_BG}>
-      {[{ t: NBSP }, ...runs, { t: NBSP }].map(r => <Text {...(r.c ? { color: r.c } : {})} {...(r.b ? { weight: 'semibold' as const } : {})} {...(r.dim ? { dimColor: true } : {})}>{r.t}</Text>)}
-    </Text>
-  )
+  const Svg = svgOf(els)
+  type Run = { t: string; c?: string; b?: boolean; dim?: boolean }
+  const text = (runs: Run[]) => runs.map(r => <Text {...(r.c ? { color: r.c } : {})} {...(r.b ? { weight: 'semibold' as const } : {})} {...(r.dim ? { dimColor: true } : {})}>{r.t}</Text>)
+  // A chip is a Text with a fill; one with a GitHub icon is a Box with the fill, the icon
+  // an Svg before its words, as GitHub sets a branch name. Without an Svg it is words alone.
+  // A chip shrinks with the card and cuts its words with an ellipsis rather than run past
+  // the border (seen live: "✓ switched feat/push-merge-crab · filetrail" did, as one Text).
+  const chip = (key: string, runs: Run[], icon?: { name: GitIcon; color: string; alt: string }) => {
+    const drawn = icon && Svg ? octicon(icon.name, icon.color, icon.alt) : null
+    return (
+      <Box key={key} flexDirection="row" alignItems="center" backgroundColor={CHIP_BG} flexShrink={1} minWidth={0}>
+        {drawn && Svg ? <Text>{NBSP}</Text> : null}
+        {drawn && Svg ? <Svg source={drawn.source} alt={drawn.alt} width={drawn.width} height={drawn.height} /> : null}
+        <Box key={`${key}-words`} flexShrink={1} minWidth={0}>
+          <Text wrap="truncate-end">{text([{ t: NBSP }, ...runs, { t: NBSP }])}</Text>
+        </Box>
+      </Box>
+    )
+  }
   const b = git?.branch
   const branch = !git
     ? chip('chip-branch', [{ t: 'not a git repo', dim: true }])
     : chip('chip-branch', [
+      // The terminal has no Svg: the branch glyph stands in for the icon.
+      ...(Svg ? [] : [{ t: `${BRANCH_GLYPH} `, dim: true }]),
       { t: b ? b.head : 'git', c: 'claude', b: true },
       ...(b?.ahead ? [{ t: ` ↑${b.ahead}`, dim: true }] : []),
       ...(b?.behind ? [{ t: ` ↓${b.behind}`, dim: true }] : []),
-    ])
+    ], { name: 'branch', color: ICON_MUTED, alt: 'Branch' })
   const sum = repoSummary(git)
   const changes = sum
     ? [
@@ -184,10 +213,11 @@ function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry
   const more = log.length - 1
   return (
     <Box key="branch-chips" flexDirection="column" gap="xs">
-      <Box key="chips" flexDirection="row" flexWrap="wrap" gap={1}>
+      <Box key="chips" flexDirection="row" flexWrap="wrap" gap={1} minWidth={0}>
         {branch}
         {repoChip}
-        {latest && !running ? chip(`git-${latest.id}`, runs(latest)) : null}
+        {/* An action kept from before icons were recorded (state outlives a reload) has none. */}
+        {latest && !running ? chip(`git-${latest.id}`, runs(latest), latest.icon ? { name: latest.icon, color: actionIconColor(latest), alt: latest.verb } : undefined) : null}
         {more > 0 ? <Button key="git-more" label={open ? 'fewer' : `${more} more`} plain dimColor onPress={() => actions.toggleGitLog()} /> : null}
       </Box>
       {latest && running ? line(latest) : null}
@@ -260,18 +290,22 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
         const { name, dir } = splitPath(relTo(root, f.path))
         const now = flash[lower(f.path)]
         const style = NOW_STYLE[now ?? f.tone]
+        // A deleted file has no row in the tree to go to: a click shows its history, the
+        // text it had kept there. Its word says who deleted it.
+        const gone = f.tone === 'delete'
+        const did = gone && f.by === 'you' ? 'deleted by you' : style.did
         const segs: Seg[] = [
           { t: ` ${badgeOf(f.path)} `, c: GIT_HEX.changed, bg: '#e5c07b22', b: true },
           { t: `${NNBSP}${name}`, name: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
           // The folder gives way before the name when the row is short (seen live: "notes.…" beside a whole folder).
           ...(dir ? [{ t: `${NNBSP}${dir}`, dim: true, opt: true }] : []),
           now
-            ? { t: ` ${style.pill} `, c: style.color, bg: style.fill, b: true, right: true }
-            : { t: ` ${style.did[0]!.toUpperCase()}${style.did.slice(1)} `, c: style.color, right: true },
+            ? { t: ` ${gone && f.by === 'you' && now === 'delete' ? 'Deleted by you' : style.pill} `, c: style.color, bg: style.fill, b: true, right: true }
+            : { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true },
         ]
         if (Client) {
-          rowPresses.set(key, () => actions.reveal(f.path))
-          rowOpens.set(key, () => actions.preview(f.path))
+          rowPresses.set(key, () => (gone ? actions.history(f.path) : actions.reveal(f.path)))
+          rowOpens.set(key, () => (gone ? actions.history(f.path) : actions.preview(f.path)))
           rowCopies.set(key, (full, surface) => actions.copy(f.path, full, surface))
           // Monospace, as the tree's rows: the row fits itself by counting cells (seen live: a
           // proportional name was cut short with room to spare).
@@ -299,6 +333,8 @@ export function filesView(
   touched: readonly TouchedFile[] = [],
   /** Tree rows the pane has room for under its head; null draws them all. */
   fit: number | null = null,
+  /** The push or merge the card's crab acts out, or null. */
+  stage: GitStage | null = null,
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -348,7 +384,7 @@ export function filesView(
               )}
           </Box>,
         branchChips(els, git, gitLog, files.gitOpen === true, actions),
-      ], width < NARROW_COLUMNS)}
+      ], width < NARROW_COLUMNS, stage)}
       {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">

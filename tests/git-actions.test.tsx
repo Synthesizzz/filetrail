@@ -17,6 +17,15 @@ test('gitActionsOf finds git and gh pr actions, with what they name', () => {
   expect(verbs('cd repo; git stash pop')).toEqual(['stash|pop'])
 })
 
+test('gitActionsOf gives each action GitHub\'s icon, and a push or a merge the crab\'s pose', () => {
+  const marks = (command: string) => gitActionsOf(command).map(a => `${a.verb}|${a.icon}|${a.pose ?? ''}`)
+  expect(marks('git commit -m x && git push')).toEqual(['commit|commit|', 'push|push|push'])
+  expect(marks('git merge topic; git rebase main')).toEqual(['merge|merge|merge', 'rebase|merge|merge'])
+  expect(marks('gh pr merge 12 --squash')).toEqual(['PR merge|merge|merge'])
+  expect(marks('gh pr create --fill')).toEqual(['PR create|pr|'])
+  expect(marks('git switch main && git pull && git stash')).toEqual(['switch|branch|', 'pull|pull|', 'stash|stash|'])
+})
+
 test('gitActionsOf names the folder an action ran in when a cd or -C moved it off the root', () => {
   const repos = (command: string) => gitActionsOf(command, 'C:/work/demo').map(a => `${a.verb}|${a.repo}`)
   expect(repos('git commit -m x')).toEqual(['commit|'])
@@ -60,7 +69,7 @@ test('a git init through Bash makes a folder found not to be a repo be asked aga
 })
 
 test('gitActionSegs: running shimmers in its colour, done ticks, failure is red, denial dim', () => {
-  const base: GitActionEntry = { id: 'g1', verb: 'push', running: 'pushing', done: 'pushed', kind: 'sync', target: 'origin main', repo: '', state: 'running', at: 1 }
+  const base: GitActionEntry = { id: 'g1', verb: 'push', running: 'pushing', done: 'pushed', kind: 'sync', icon: 'push', target: 'origin main', repo: '', state: 'running', at: 1 }
   const text = (a: GitActionEntry) => gitActionSegs(a).map(s => s.t.replace(/\u00a0/g, ' ')).join('')
   expect(text(base)).toBe('… pushing origin main')
   expect(gitActionSegs(base)[1]!.sh).toEqual(KIND_SHIMMER.sync)

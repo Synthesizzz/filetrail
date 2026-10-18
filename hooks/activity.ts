@@ -1,7 +1,7 @@
 // What Claude is touching: the path a tool call names and whether it reads
 // or writes it, and the folders to open so the tree shows it.
 
-import type { Tone } from '../types'
+import type { DeletedBy, Tone } from '../types'
 import { normPath, relTo } from './history'
 import { joinPath } from './tree'
 
@@ -88,7 +88,8 @@ export function glide(from: number, to: number, steps = GLIDE_STEPS): number[] {
   return out
 }
 
-export type Target = { path: string; tone: Tone; follow: boolean }
+/** `by`: who deleted it, for a `delete`. */
+export type Target = { path: string; tone: Tone; follow: boolean; by?: DeletedBy }
 
 const READS = new Set(['Read'])
 const SEARCHES = new Set(['Grep', 'Glob'])

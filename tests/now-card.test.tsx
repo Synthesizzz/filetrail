@@ -1,11 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 
 import { FLASH_MS } from '../hooks/activity'
-import { crabSvg, CRAB_PX } from '../hooks/crab'
-import { badgeOf } from '../hooks/files-view'
+import { crabSvg, CRAB_PX, GONE, MERGE, PUSH } from '../hooks/crab'
+import { badgeOf, BRANCH_GLYPH, CHIP_BG, ICON_MUTED } from '../hooks/files-view'
 
 const BOOK_COLOR = '#8b5cf6'
-import { NOW_STYLE, spelled } from '../hooks/now-card'
+import { NOW_STYLE, STAGE_STYLE, spelled } from '../hooks/now-card'
 import { DONE, PANE, START, hasText, pressRow, rowRuns, rowText, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
@@ -151,8 +151,84 @@ test('the crab takes a pose for what Claude does: asleep, then reading', async (
 })
 
 test('crabSvg: each pose its own drawing, at the card\'s size', () => {
-  const sources = (['read', 'write', 'commit', 'idle'] as const).map(p => crabSvg(p, p).source)
-  expect(new Set(sources).size).toBe(4)
+  const sources = (['read', 'write', 'commit', 'idle', 'push', 'merge', 'delete'] as const).map(p => crabSvg(p, p).source)
+  expect(new Set(sources).size).toBe(7)
   expect(crabSvg('idle', 'x')).toMatchObject({ width: CRAB_PX.width, height: CRAB_PX.height })
-  expect(sources[3]).toContain('prefers-reduced-motion')
+  for (const source of sources) expect(source).toContain('prefers-reduced-motion')
+  // A push sends an arrow up in the git bar's teal; a merge joins two branches in its purple.
+  expect(sources[4]).toContain(PUSH)
+  expect(sources[4]).toContain('class="ar"')
+  expect(sources[5]).toContain(MERGE)
+  expect(sources[5]!.match(/class="mg"/g)?.length).toBe(2)
+  // A delete crosses the page out in red.
+  expect(sources[6]).toContain(GONE)
+})
+
+/** The crab's Svg: the card has the chips' icons in its title bar too. */
+const crabOf = async (ui: any) => (await ui.findAll({ type: 'Svg' })).find((s: any) => String(s.props?.alt).startsWith('Crab'))
+const GIT = { top: 'C:/work/demo', status: '## main\0', numstat: '' }
+
+test('a push: the crab sends an arrow up and the pill says Pushed, then the card goes back to idle', async ($, on) => {
+  const { clock } = world(on, { dirs: DIRS, git: GIT })
+  await $.session.start(START)
+  await clock.advance(1000)
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  await clock.advance(200)
+  expect(await hasText(ui, 'Pushed origin main')).toBe(true)
+  expect((await ui.findAll({ type: 'Text' })).some((t: any) => t.text === '\u00a0Pushed\u00a0')).toBe(true)
+  expect(await ui.find({ key: 'now-card' })).toMatchObject({ props: { borderColor: STAGE_STYLE.push.color } })
+  const crab = await crabOf(ui)
+  expect(crab?.props?.alt).toBe('Crab pushed origin main')
+  expect(String(crab?.props?.source)).toContain('class="ar"')
+  // FLASH_MS after it is done, the crab puts it down.
+  await clock.advance(FLASH_MS + 100)
+  expect(await hasText(ui, 'Pushed origin main')).toBe(false)
+  expect((await crabOf(ui))?.props?.alt).toBe('Crab asleep: Claude is idle')
+  await ui.unmount()
+})
+
+test('a merge: the crab joins two branches and the pill says Merged; a failed one is not acted out', async ($, on) => {
+  const { clock } = world(on, { dirs: DIRS, git: GIT })
+  await $.session.start(START)
+  await clock.advance(1000)
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.tool.call({ tool: 'Bash', command: 'git merge topic' })
+  await clock.advance(200)
+  expect(await hasText(ui, 'Merged topic')).toBe(true)
+  expect(String((await crabOf(ui))?.props?.source)).toContain('class="mg"')
+  await clock.advance(FLASH_MS + 100)
+  await $.tool.call({ tool: 'Bash', command: 'git merge other --fail' })
+  await clock.advance(200)
+  expect(await hasText(ui, 'Merged other')).toBe(false)
+  expect((await crabOf(ui))?.props?.alt).toBe('Crab asleep: Claude is idle')
+  await ui.unmount()
+})
+
+test('the branch chip carries GitHub\'s branch icon, the latest git action its own; the terminal gets a glyph', async ($, on) => {
+  const { clock } = world(on, { dirs: DIRS, git: GIT })
+  await $.session.start(START)
+  await clock.advance(1000)
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  expect(await ui.find({ key: 'chip-branch' })).toMatchObject({ type: 'Box', props: { backgroundColor: CHIP_BG } })
+  const icons = async () => (await ui.findAll({ type: 'Svg' })).filter((s: any) => !String(s.props?.alt).startsWith('Crab'))
+  expect((await icons()).map((s: any) => s.props.alt)).toEqual(['Branch'])
+  expect(String((await icons())[0]!.props.source)).toContain(ICON_MUTED)
+  await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  await clock.advance(200)
+  const pushed = await icons()
+  expect(pushed.map((s: any) => s.props.alt)).toEqual(['Branch', 'push'])
+  // A long action shrinks with the card and is cut, not run past its border (seen live).
+  await $.tool.call({ tool: 'Bash', command: 'git switch feat/a-very-long-branch-name-for-the-card' })
+  await clock.advance(200)
+  const action = (await ui.findAll({ type: 'Box' })).find((b: any) => /^git-.*-words$/.test(String(b.key)))
+  expect(action?.props).toMatchObject({ flexShrink: 1, minWidth: 0 })
+  expect(JSON.stringify(action)).toContain('truncate-end')
+  expect(String(pushed[1]!.props.source)).toContain(PUSH)
+  await ui.unmount()
+
+  const term = await $.ui.mount({ plugin: 'filetrail', surface: 'terminal', ...PANE })
+  expect(await term.find({ type: 'Svg' })).toBeUndefined()
+  expect((await term.findAll({ type: 'Text' })).some((t: any) => String(t.text).includes(`${BRANCH_GLYPH} main`))).toBe(true)
+  await term.unmount()
 })

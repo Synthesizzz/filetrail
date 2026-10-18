@@ -1,7 +1,7 @@
 // filetrail's edit history: turning tool calls into steps, and keeping the
 // stored history inside the store's budget. No engine calls here.
 
-import type { Step, StepStatus, Turn } from '../types'
+import type { DeletedBy, Step, StepStatus, Turn } from '../types'
 import { capDiff, countChanges, diffLines } from './diff'
 
 export const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit'])
@@ -95,6 +95,16 @@ export function stepsFor(call: EditCall, before: string | null, root: string, at
   return [step({
     id: `${idBase}.0`, path, rel, tool: 'Write', note: before === null ? 'new file' : 'rewrite', line: null, at,
   }, before ?? '', call.content ?? '')]
+}
+
+/**
+ * A deleted file as a step: its text, when a copy was kept, as removed lines (capped as
+ * any step's diff is), so History shows what was in it. `text` null: no copy (binary,
+ * too large, or gone before it could be read).
+ */
+export function deleteStep(path: string, root: string, text: string | null, by: DeletedBy, at: number, id: string): Step {
+  const note = [by === 'you' ? 'deleted by you' : 'deleted', ...(text === null ? ['no copy kept'] : [])].join(' · ')
+  return { ...step({ id, path: normPath(path), rel: relTo(root, normPath(path)), tool: 'Delete', note, line: null, at }, text ?? '', ''), status: 'ok' }
 }
 
 /** What `next(e)` of a tool call resolved to, as a step status. */
