@@ -82,7 +82,7 @@ Under the card is the **file tree**, with two views you switch between with `All
 In both views:
 
 - Folders open on a click. Dotfiles are dimmed and `.git` is hidden.
-- The `•` before a file takes its type's colour: blue TypeScript, gold JavaScript, teal Python, grey-blue Markdown and text, amber JSON/YAML/TOML, pink CSS, orange HTML and notebooks, purple SQL. Other files stay grey.
+- The `•` before a file takes its type's colour: blue TypeScript, gold JavaScript, teal Python, grey-blue Markdown and text, amber JSON/YAML/TOML, pink CSS, orange HTML and notebooks, purple SQL. Other files stay grey. The type badges in the TOUCHED list (`TS`, `MD`) use the same colours.
 - Git status colours each name (yellow modified, green new, red deleted). At the right edge are `+N -N` and a letter (`M`, `A`, `U` untracked, `D`, `R`, `C` conflict). A file with no changes shows when it last changed instead.
 - Folders add up what changed inside them: `?:n` new, `M:n` changed, `D:n` deleted.
 - `●N` counts Claude's edits to a file. A closed folder shows `●` when something inside it was edited.

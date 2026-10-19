@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { FLASH_MS } from '../hooks/activity'
 import { crabSvg, CRAB_PX, GONE, MERGE, PUSH } from '../hooks/crab'
-import { badgeOf, BRANCH_GLYPH, CHIP_BG, ICON_MUTED } from '../hooks/files-view'
+import { badgeOf, BRANCH_GLYPH, CHIP_BG, GIT_HEX, ICON_MUTED, typeColor } from '../hooks/files-view'
 
 const BOOK_COLOR = '#8b5cf6'
 import { NOW_STYLE, STAGE_STYLE, spelled } from '../hooks/now-card'
@@ -236,4 +236,19 @@ test('the branch chip carries GitHub\'s branch icon, the latest git action its o
   expect(await term.find({ type: 'Svg' })).toBeUndefined()
   expect((await term.findAll({ type: 'Text' })).some((t: any) => String(t.text).includes(`${BRANCH_GLYPH} main`))).toBe(true)
   await term.unmount()
+})
+
+test('a touched file\'s badge takes its type\'s colour, as the tree\'s marker does; grey for a type not listed', async ($, on) => {
+  const { clock } = world(on, { dirs: { 'C:\work\demo': [['app.ts', 'file'], ['Makefile', 'file']] }, files: { 'C:\work\demo\app.ts': 'a\n', 'C:\work\demo\Makefile': 'm\n' } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.tool.call({ tool: 'Read', file_path: 'C:/work/demo/app.ts' } as never)
+  await $.tool.call({ tool: 'Read', file_path: 'C:/work/demo/Makefile' } as never)
+  await clock.advance(200)
+  await ui.advance(500)
+  const badge = async (key: string) => (await rowRuns(ui, key)).find(r => /^\s*[A-Z]{2,3}\s*$/.test(r.text))?.props.color
+  expect(await badge('touched-c:/work/demo/app.ts')).toBe(typeColor('app.ts'))
+  expect(await badge('touched-c:/work/demo/makefile')).toBe(GIT_HEX.muted)
+  await ui.unmount()
 })

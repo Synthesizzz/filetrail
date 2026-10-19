@@ -327,8 +327,10 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
         // text it had kept there. Its word says who deleted it.
         const gone = f.tone === 'delete'
         const did = gone && f.by === 'you' ? 'deleted by you' : style.did
+        const badgeColor = typeColor(f.path) ?? GIT_HEX.muted
         const segs: Seg[] = [
-          { t: ` ${badgeOf(f.path)} `, c: GIT_HEX.changed, bg: '#e5c07b22', b: true },
+          // The badge takes the file type's colour, as the tree's marker does; grey for a type not listed.
+          { t: ` ${badgeOf(f.path)} `, c: badgeColor, bg: `${badgeColor}22`, b: true },
           { t: `${NNBSP}${name}`, name: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
           // The folder gives way before the name when the row is short (seen live: "notes.…" beside a whole folder).
           ...(dir ? [{ t: `${NNBSP}${dir}`, dim: true, opt: true }] : []),
