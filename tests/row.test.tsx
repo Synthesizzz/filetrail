@@ -59,9 +59,9 @@ test('a narrow row fits its region: the Client is as wide as the pane and cuts i
   await ui.resize({ columns: 20, rows: 1, in: key })
   const line = await rowText(ui, key)
   expect([...line].length).toBeLessThanOrEqual(20)
-  expect(line).toMatch(/^ {2}· a-rather-long-f…$/)
+  expect(line).toMatch(/^ {2}• a-rather-long-f…$/)
   await ui.resize({ columns: 80, rows: 1, in: key })
-  expect(await rowText(ui, key)).toBe('  · a-rather-long-file-name-for-a-narrow-dock.tsx')
+  expect(await rowText(ui, key)).toBe('  • a-rather-long-file-name-for-a-narrow-dock.tsx')
   await ui.unmount()
 })
 

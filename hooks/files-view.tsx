@@ -253,6 +253,31 @@ export const GIT_HEX = {
   add: '#98c379', del: '#e06c75', muted: '#808a96',
 } as const
 
+/**
+ * A file type's colour, for the marker before its name (the name's own colour is git's):
+ * close to the colours editors and GitHub give these languages, each mid-dark enough to
+ * read on a light and a dark pane alike.
+ */
+const TYPE_COLORS: [readonly string[], string][] = [
+  [['ts', 'tsx', 'mts', 'cts'], '#4f8fd6'],
+  [['js', 'jsx', 'mjs', 'cjs'], '#d4a017'],
+  [['py', 'pyi'], '#2bb3a3'],
+  [['md', 'mdx', 'txt', 'rst'], '#7c8db5'],
+  [['json', 'jsonc', 'yml', 'yaml', 'toml'], '#e69500'],
+  [['css', 'scss', 'less'], '#e0569b'],
+  [['html', 'htm'], '#e8743b'],
+  [['sql'], '#9b6bd6'],
+  [['ipynb'], '#f37726'],
+]
+const TYPE_COLOR: Record<string, string> = Object.fromEntries(TYPE_COLORS.flatMap(([exts, c]) => exts.map(x => [x, c])))
+
+/** The colour of a file's type, by its extension; undefined for one not listed (its marker stays grey). */
+export function typeColor(path: string): string | undefined {
+  const name = path.split('/').pop() ?? path
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? TYPE_COLOR[name.slice(dot + 1).toLowerCase()] : undefined
+}
+
 /** A file's kind as a short badge: its extension, upper-cased, three letters at most. */
 export function badgeOf(path: string): string {
   const name = path.split('/').pop() ?? path
@@ -422,12 +447,14 @@ export function filesView(
         // The indent is non-breaking spaces in a monospace run: the desktop collapses leading plain spaces,
         // and a proportional font would set the arrow and the blank slot at different widths.
         // As filetree draws on the desktop (its Nerd Font icons have no glyph there): a blue
-        // ■ for a folder, a · for a file; a dotfile's name is dimmed unless git or Claude colours it.
+        // ■ for a folder, a • for a file in its type's colour (grey when not listed, the name
+        // keeping git's colour); a dotfile's name and marker are dimmed unless git or Claude colours it.
         const dotfile = entry.name.startsWith('.')
         const segs: Seg[] = [
           // The selected row is filled where a Client draws it; a marker stands in elsewhere.
           { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected && !Client ? '›' : NBSP) + NNBSP, mono: true },
-          { t: (isDir ? '■' : '·') + NNBSP, ...(isDir ? { c: FOLDER_COLOR } : {}), dim: !isDir || dotfile },
+          isDir ? { t: '■' + NNBSP, c: FOLDER_COLOR, dim: dotfile }
+            : { t: '•' + NNBSP, ...(!dotfile && typeColor(entry.path) ? { c: typeColor(entry.path)! } : { dim: true }) },
           {
             t: entry.name + (isDir ? '/' : ''), name: true,
             ...(color ? { c: color } : dotfile ? { dim: true } : {}),
