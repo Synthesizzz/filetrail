@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeletedBy, Entry, FilesView, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
+import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
@@ -12,7 +12,7 @@ import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
-import { filesView } from './files-view'
+import { filesView, TOUCHED_MAX } from './files-view'
 import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
@@ -43,13 +43,20 @@ const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as Searc
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
 const stage = atom({ plugin: 'filetrail', key: 'stage' } as const, null as Stage | null)
 const working = atom({ plugin: 'filetrail', key: 'working' } as const, false)
+const turnFiles = atom({ plugin: 'filetrail', key: 'turnFiles' } as const, [] as string[])
+/** The tree's view, kept for the next session. */
+const MODE_KEY = 'filetrail:treeMode'
+/** The touched files the card shows, as its handle left it, kept for the next session. */
+const ROWS_KEY = 'filetrail:touchedRows'
+/** This turn's files kept at most, for the Now tree. */
+const MAX_TURN_FILES = 100
 const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as Preview | null)
 const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as TouchedFile[])
 /** The files of the history git ignores (lower-cased): History leaves them out. */
 const ignored = atom({ plugin: 'filetrail', key: 'ignored' } as const, [] as string[])
 /** Kept in the session's state, so a reload starts from the head measured before. */
 /** Files the Claude touched list keeps. */
-const MAX_TOUCHED = 8
+const MAX_TOUCHED = TOUCHED_MAX
 // One build at a time: typing fast must not start a listing per key.
 let indexing: Promise<void> | null = null
 
@@ -198,6 +205,8 @@ async function touch($: EngineInterface, target: Target) {
   if (target.follow || target.tone === 'commit' || target.tone === 'delete') {
     const entry: TouchedFile = { path: normPath(target.path), tone: target.tone, at, ...(target.by ? { by: target.by } : {}) }
     await update($, touched, list => [entry, ...list.filter(f => lower(f.path) !== k)].slice(0, MAX_TOUCHED))
+    // The Now tree: this turn's files, the newest last.
+    await update($, turnFiles, list => [...list.filter(p => lower(p) !== k), normPath(target.path)].slice(-MAX_TURN_FILES))
   }
   flashTimers.get(k)?.cancel()
   flashTimers.set(k, $.clock.after(target.follow ? HOLD_MS : FLASH_MS, () => {
@@ -689,6 +698,12 @@ export const register: Register = on => {
     // left running is over too.
     await update($, stage, () => null)
     await update($, working, () => false)
+    // The tree's view as left in an earlier session.
+    const mode = await $.store.get(MODE_KEY)
+    if (mode === 'now' || mode === 'all') await update($, files, f => ({ ...f, mode: mode as TreeMode }))
+    // The card's size as the handle left it.
+    const rows = await $.store.get(ROWS_KEY)
+    if (typeof rows === 'number') await update($, files, f => ({ ...f, touchedRows: rows }))
     await listDir($, root)
     scheduleGit($)
     void openPane($)
@@ -702,6 +717,8 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       pending = { id: e.turnId, at: await $.clock.now(), prompt: firstLine(e.text), steps: [] }
       await update($, working, () => true)
+      // A new turn: the Now tree starts empty (the last turn's stayed on show until now).
+      await update($, turnFiles, () => [])
     }
     return next(e)
   }).catch(async ($, e, next) => {
@@ -905,9 +922,16 @@ export const register: Register = on => {
   // A double-click's second click opens a file (a folder has nothing to open, so it is
   // let be rather than closing what the first click opened); a right-click copies the path.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown; tool?: unknown } | null
+    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown; tool?: unknown; resize?: unknown; end?: unknown } | null
     if (e.requestId !== PANE || !data || typeof data !== 'object') return next(e)
     if (typeof data.tool === 'string' && toolPresses.has(data.tool)) { toolPresses.get(data.tool)!(); return {} }
+    // The card's handle, dragged: as many touched files as it asks, kept for the next session once let go.
+    if (typeof data.resize === 'number' && e.element === 'card-handle') {
+      const rows = Math.max(0, Math.min(TOUCHED_MAX, Math.round(data.resize)))
+      await update($, files, f => ({ ...f, touchedRows: rows, touchedOpen: false }))
+      if (data.end === true) await $.store.set(ROWS_KEY, rows)
+      return {}
+    }
     if (data.press === true && rowPresses.has(e.element)) { rowPresses.get(e.element)!(); return {} }
     if (data.open === true) { rowOpens.get(e.element)?.(); return {} }
     if (data.copy === true && rowCopies.has(e.element)) { rowCopies.get(e.element)!(data.full === true, e.surface); return {} }
@@ -962,6 +986,18 @@ export const register: Register = on => {
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
                 toggleTouched: () => fire($, 'listing the touched files', () => update($, files, f => ({ ...f, touchedOpen: !f.touchedOpen }))),
+                setMode: mode => fire($, 'switching the tree', async () => {
+                  await update($, files, f => ({ ...f, mode }))
+                  await $.store.set(MODE_KEY, mode)
+                }),
+                openInAll: dir => fire($, 'opening a folder', async () => {
+                  const k = lower(dir.path)
+                  browsed.set(k, await $.clock.now())
+                  const up = (foldersTo(root, dir.path) ?? []).map(lower)
+                  await update($, files, f => ({ ...f, mode: 'all' as const, expanded: [...new Set([...f.expanded, ...up, k])] }))
+                  await $.store.set(MODE_KEY, 'all')
+                  if (!(k in (await read($, listing)))) await listDir($, dir.path)
+                }),
                 refresh: () => fire($, 'refreshing', async () => {
                   await relist($)
                   await refreshGit($)
@@ -990,7 +1026,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

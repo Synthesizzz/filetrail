@@ -3,7 +3,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, Tone, TouchedFile, Turn } from '../types'
+import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
@@ -11,12 +11,14 @@ import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import type { Tool, ToolsProps } from './tools'
+import type { HandleProps } from './handle'
 import { NOW_STYLE, nowCard } from './now-card'
 import { octicon, svgOf } from './octicons'
+import { foldersTo } from './activity'
 import { previewView } from './preview'
 import type { PreviewActions } from './preview'
 import { findFiles } from './search'
-import { editCounts, hasEditsBelow, lower, visibleRows } from './tree'
+import { editCounts, hasEditsBelow, lower, parentOf, visibleRows } from './tree'
 
 type Els = ReturnType<EngineInterface['ui']['resolve']>
 /** Rows drawn at most; a longer tree says how many it left out. */
@@ -41,6 +43,10 @@ export type FilesActions = {
   toggleGitLog: () => void
   /** Lists every touched file in the card, or only the latest few again. */
   toggleTouched: () => void
+  /** Shows the whole tree, or only the way down to this turn's files. */
+  setMode: (mode: TreeMode) => void
+  /** From the Now tree, a folder pressed: the whole tree, opened down to it. */
+  openInAll: (dir: Entry) => void
   /** Lists the open folders again, reads git again and rebuilds the search's file list. */
   refresh: () => void
   /** Leaves dotfiles out of the tree, or shows them again. */
@@ -291,21 +297,28 @@ export function badgeOf(path: string): string {
  * Claude is at it). A click goes to it in the tree, a double-click shows it, a
  * right-click copies its path.
  */
-/** Touched files shown before "+N more": the card stays short so the tree keeps the room. */
+/** Touched files shown before "+N more", until the card's handle is dragged: the card stays short so the tree keeps the room. */
 export const TOUCHED_SHOWN = 3
+/** The most touched files kept, and so the most the handle can show. */
+export const TOUCHED_MAX = 8
 
-function touchedSection(els: Els, root: string, touched: readonly TouchedFile[], flash: Readonly<Record<string, Tone>>, open: boolean, actions: FilesActions) {
+/** `rows`: how many touched files show before "+N more", as the card's handle left it. */
+function touchedSection(els: Els, root: string, touched: readonly TouchedFile[], flash: Readonly<Record<string, Tone>>, open: boolean, actions: FilesActions, rows = TOUCHED_SHOWN) {
   const { Box, Text, Button } = els
-  const more = touched.length - TOUCHED_SHOWN
+  const more = touched.length - rows
   const Client = 'Client' in els ? els.Client : undefined
   if (!touched.length) return []
+  // The handle along the card's bottom border: dragged, it shows more or fewer touched files.
+  const handle = Client
+    ? [<Client key="card-handle" module="./handle.tsx" width="100%" props={{ rows: Math.min(rows, touched.length), max: Math.min(TOUCHED_MAX, touched.length) } satisfies HandleProps} />]
+    : []
   return [
     <Box key="touched" flexDirection="column" gap="xs">
       <Box key="touched-head" flexDirection="row" justifyContent="space-between">
         <Text size="caption" weight="semibold" dimColor>{`TOUCHED · ${touched.length}`}</Text>
         {more > 0 ? <Button key="touched-more" label={open ? 'fewer' : `+${more} more`} plain dimColor onPress={() => actions.toggleTouched()} /> : null}
       </Box>
-      {(open ? touched : touched.slice(0, TOUCHED_SHOWN)).map(f => {
+      {(open ? touched : touched.slice(0, rows)).map(f => {
         const key = `touched-${lower(f.path)}`
         const { name, dir } = splitPath(relTo(root, f.path))
         const now = flash[lower(f.path)]
@@ -334,6 +347,7 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
         return <Text key={key}>{segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.dim ? { dimColor: true } : {})}>{s.t}</Text>)}</Text>
       })}
     </Box>,
+    ...handle,
   ]
 }
 
@@ -355,6 +369,8 @@ export function filesView(
   stage: Stage | null = null,
   /** A main-loop turn is running, for the crab's thinking. */
   working = false,
+  /** This turn's files (the last turn's, once it ended), for the Now tree. */
+  turnFiles: readonly string[] = [],
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -364,7 +380,16 @@ export function filesView(
   const Client = 'Client' in els ? els.Client : undefined
   const name = root.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? root
   const counts = editCounts(turns)
-  const rows = visibleRows(root, listing, files.expanded, files.hideDots === true)
+  // Now: the folders down to this turn's files, opened, and those files, with everything in the
+  // folder Claude is in now (its latest file's) so its neighbours show; All: the tree as opened.
+  const now = files.mode === 'now'
+  const nowFiles = new Set(turnFiles.map(lower))
+  const nowDirs = new Set(turnFiles.flatMap(p => (foldersTo(root, p) ?? []).map(lower)))
+  const workDir = turnFiles.length ? lower(parentOf(turnFiles[turnFiles.length - 1]!)) : null
+  const rows = now
+    ? visibleRows(root, listing, [...nowDirs], files.hideDots === true).filter(r => lower(parentOf(r.entry.path)) === workDir
+      || (r.entry.kind === 'dir' ? nowDirs : nowFiles).has(lower(r.entry.path)))
+    : visibleRows(root, listing, files.expanded, files.hideDots === true)
   const shown = rows.slice(0, MAX_ROWS)
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
@@ -385,7 +410,7 @@ export function filesView(
       {/* As filetree heads its tree: the folder, then the branch and its upstream with the repo's changes at the right. */}
       {/* One card for the top of the pane: the folder, its toolbar, the branch and git as chips,
           then what Claude is doing right now and the files it touched this session. */}
-      {nowCard(els, root, listing, last, flash, touchedSection(els, root, touched, flash, files.touchedOpen === true, actions), [
+      {nowCard(els, root, listing, last, flash, touchedSection(els, root, touched, flash, files.touchedOpen === true, actions, files.touchedRows ?? TOUCHED_SHOWN), [
           <Box key="name-line" flexDirection="row" gap={1} minWidth={0}>
             <Box key="name-box" flexShrink={1} minWidth={0}>
               <Text weight="semibold" color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
@@ -430,8 +455,13 @@ export function filesView(
       {/* A file shown in the pane takes the tree's place; ← files brings the tree back as it was. */}
       {preview ? previewView(els, root, preview, actions.previewing, flash[lower(preview.path)] ? TONE_COLOR[flash[lower(preview.path)]!] : undefined) : searching ? searchResults(els, query, searchIndex, actions) : (
       <Box key="tree" flexDirection="column">
+      {/* The tree's two views: the whole project, or the way down to what Claude touches now. */}
+      <Box key="tree-mode" flexDirection="row" gap={1} marginBottom={1}>
+        <Button key="mode-all" label="All" plain {...(now ? { dimColor: true } : { variant: 'primary' as const })} onPress={() => actions.setMode('all')} />
+        <Button key="mode-now" label="Now" plain {...(now ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => actions.setMode('now')} />
+      </Box>
       {!(lower(root) in listing) && <Text dimColor>Reading the folder…</Text>}
-      {lower(root) in listing && rows.length === 0 && <Text dimColor>This folder is empty.</Text>}
+      {lower(root) in listing && rows.length === 0 && <Text dimColor>{now ? 'Nothing touched this turn yet: Claude\'s files show here as it reads and edits them.' : 'This folder is empty.'}</Text>}
       {/* Every row is drawn: the pane scrolls like a page when the tree is long. */}
       {shown.map(({ entry, depth, isOpen }) => {
         const isDir = entry.kind === 'dir'
@@ -442,7 +472,7 @@ export function filesView(
         const lines = isDir ? null : lineCounts(git, entry.path)
         const isSelected = lower(entry.path) === selected
         const key = `row-${lower(entry.path)}`
-        const press = () => (isDir ? actions.toggle(entry) : actions.select(entry))
+        const press = () => (isDir ? (now ? actions.openInAll(entry) : actions.toggle(entry)) : actions.select(entry))
         // The desktop draws no `inverse`: a selected file also gets a marker and bold, which every surface shows.
         // The indent is non-breaking spaces in a monospace run: the desktop collapses leading plain spaces,
         // and a proportional font would set the arrow and the blank slot at different widths.

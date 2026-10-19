@@ -75,7 +75,10 @@ export type GitInfo = {
  * `gitOpen`: the git bar shows every kept action, not only the latest. `hideDots`: dotfiles left out of the tree.
  * `touchedOpen`: the card lists every touched file, not only the latest few.
  */
-export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean; touchedOpen?: boolean }
+export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean; touchedOpen?: boolean; mode?: TreeMode; touchedRows?: number }
+
+/** The tree's view: the whole project, or only the way down to what Claude touched this turn. */
+export type TreeMode = 'all' | 'now'
 
 /** Every file of the project, relative to its root, for the search box; `complete` false when the list was cut short. */
 export type SearchIndex = { files: string[]; complete: boolean }
@@ -161,6 +164,8 @@ declare module 'claude-code' {
       stage: Stage | null
       /** Whether a main-loop turn is running: the crab thinks while nothing else shows. */
       working: boolean
+      /** The files Claude read, edited, committed or deleted in the current turn (the last, once it ended), newest last: the Now tree. */
+      turnFiles: string[]
       /** The file shown in place of the tree, or null for the tree. */
       preview: Preview | null
       /** The files Claude touched this session, newest first, eight at most. */

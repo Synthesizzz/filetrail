@@ -72,8 +72,14 @@ At the top is a **card** showing what's happening right now. Roughly:
 - **More than files:** the card also shows a push (teal), a merge (purple), a search (amber, `Searching "greet" · src`), a shell command in Bash or PowerShell (blue, `Running npm run build`), tests (`Testing…`, then a green `Tests passed` or a red `Tests failed`), a helper Claude started (pink, `Helper review the diff`), and any tool call that failed or was refused (red, `Edit failed · app.ts`). Each shows while it runs and for 5 seconds after. When several things happen, the newest is shown; a helper keeps the card while it works. While a turn runs and nothing else is on, the crab is `Thinking`.
 - **What counts as tests:** `npm`/`pnpm`/`yarn`/`bun test`, `jest`, `vitest`, `mocha`, `playwright test`, `pytest` (or `python -m pytest`), `go test`, `cargo test`, `dotnet test`, `mvn`/`gradle test`, `dbt test`, `deno test` and `claude plugin test`.
 - **TOUCHED:** the files Claude read, edited, committed or deleted this session, and any you deleted, newest first. Three are shown, with `+N more` for the rest (eight at most). Click a row to jump to it in the tree, double-click to view it, right-click to copy its path.
+- **Resize the card:** drag the `─── ⋯ ───` bar along its bottom border down to list more touched files (up to eight), or up to list fewer, down to none. The size is remembered.
 
-Under the card is the **file tree**:
+Under the card is the **file tree**, with two views you switch between with `All | Now` above it (your choice is remembered):
+
+- **All:** the whole project, opened as you and Claude leave it.
+- **Now:** only the way down from the project folder to the files Claude reads, edits, commits or deletes in this turn, each folder on the way open. The folder Claude is working in right now shows whole, so you see its file's neighbours. Once the turn ends they stay on show, and the next turn starts empty. Press a folder there to see it in the All view.
+
+In both views:
 
 - Folders open on a click. Dotfiles are dimmed and `.git` is hidden.
 - The `•` before a file takes its type's colour: blue TypeScript, gold JavaScript, teal Python, grey-blue Markdown and text, amber JSON/YAML/TOML, pink CSS, orange HTML and notebooks, purple SQL. Other files stay grey.
