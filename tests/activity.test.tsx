@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Turn } from '../types'
-import { FLASH_MS, HOLD_MS, MIN_TREE_ROWS, clampTop, foldersTo, glide, targetOf, topFor, treeLines, treeRows, treeWindow } from '../hooks/activity'
+import { FLASH_MS, HOLD_MS, foldersTo, targetOf } from '../hooks/activity'
 import { READ_COLOR, SELECTED_BG, TONE_COLOR, TONE_SHIMMER } from '../hooks/files-view'
 import { BAND_STEP, shimmer, TICK_MS } from '../hooks/row'
 import { DONE, KEY, PANE, START, pressRow, rowRuns, rowText, world } from './world'
@@ -79,44 +79,6 @@ test('targetOf: reads and writes are followed, a search only lights up', () => {
   expect(targetOf({ tool: 'Grep', pattern: 'x', path: '/w/src' })).toEqual({ path: '/w/src', tone: 'read', follow: false })
   expect(targetOf({ tool: 'Grep', pattern: 'x' })).toBe(null)
   expect(targetOf({ tool: 'Bash', command: 'cat a.ts' })).toBe(null)
-})
-
-test('treeRows gives the tree what the pane has under its head, a few rows at least', () => {
-  expect(treeRows(29, 12)).toBe(17)
-  expect(treeRows(10, 12)).toBe(MIN_TREE_ROWS)
-})
-
-test('clampTop keeps the window inside the tree', () => {
-  expect(clampTop(-3, 50, 10)).toBe(0)
-  expect(clampTop(45, 50, 10)).toBe(40)
-  expect(clampTop(5, 8, 10)).toBe(0)
-})
-
-test('topFor leaves a row already well in view, else puts it mid-window', () => {
-  expect(topFor(15, 100, 20, 10)).toBe(10)
-  expect(topFor(60, 100, 20, 10)).toBe(50)
-  expect(topFor(11, 100, 20, 10)).toBe(1)
-  expect(topFor(98, 100, 20, 0)).toBe(80)
-})
-
-test('treeWindow: the rows on show, with a line for what lies above and below', () => {
-  // All fit: no marker lines.
-  expect(treeWindow(5, 0, 10)).toEqual({ top: 0, start: 0, end: 5, above: 0, below: 5 - 5 })
-  // At the top of a long tree: the last row of room says how many are below.
-  expect(treeWindow(50, 0, 10)).toEqual({ top: 0, start: 0, end: 9, above: 0, below: 41 })
-  // In the middle: a line each way.
-  expect(treeWindow(50, 20, 10)).toEqual({ top: 20, start: 20, end: 28, above: 20, below: 22 })
-  // At the end: nothing hidden below, the last row shows.
-  expect(treeWindow(50, 99, 10)).toEqual({ top: 41, start: 41, end: 50, above: 41, below: 0 })
-  expect(treeLines(treeWindow(50, 20, 10))).toBe(10)
-  expect(treeLines(treeWindow(5, 0, 10))).toBe(5)
-})
-
-test('glide eases from one top to another, ending on it', () => {
-  expect(glide(0, 40)).toEqual([18, 30, 38, 40])
-  expect(glide(40, 0)).toEqual([22, 10, 2, 0])
-  expect(glide(5, 5)).toEqual([])
-  expect(glide(0, 1)).toEqual([1])
 })
 
 test('foldersTo lists the folders down to a file, null outside the root', () => {

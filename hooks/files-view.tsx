@@ -7,7 +7,6 @@ import type { Entry, FilesView, GitActionEntry, GitActionKind, GitIcon, GitInfo,
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
-import { treeWindow } from './activity'
 import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
@@ -42,10 +41,6 @@ export type FilesActions = {
   toggleGitLog: () => void
   /** Lists every touched file in the card, or only the latest few again. */
   toggleTouched: () => void
-  /** Moves the tree a page up (-1) or down (1) under the head, holding the follow a while. */
-  page: (dir: -1 | 1) => void
-  /** Ends a hold of the follow and goes to the file Claude touched meanwhile. */
-  backToClaude: () => void
   /** Lists the open folders again, reads git again and rebuilds the search's file list. */
   refresh: () => void
   /** Leaves dotfiles out of the tree, or shows them again. */
@@ -331,8 +326,6 @@ export function filesView(
   last: { path: string; tone: Tone } | null, actions: FilesActions, width = 60,
   searchIndex: SearchIndex | null = null, gitLog: readonly GitActionEntry[] = [], preview: Preview | null = null,
   touched: readonly TouchedFile[] = [],
-  /** Tree rows the pane has room for under its head; null draws them all. */
-  fit: number | null = null,
   /** The push or merge the card's crab acts out, or null. */
   stage: GitStage | null = null,
 ) {
@@ -346,9 +339,6 @@ export function filesView(
   const counts = editCounts(turns)
   const rows = visibleRows(root, listing, files.expanded, files.hideDots === true)
   const shown = rows.slice(0, MAX_ROWS)
-  // The tree scrolls under the head on its own first row (files.top), the head staying put.
-  // The Following paused line, when shown, takes one of the tree's rows.
-  const win = treeWindow(shown.length, files.top ?? 0, (fit ?? shown.length) - (fit !== null && files.away ? 1 : 0))
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
   const tools: (Tool & { run: () => void })[] = [
@@ -415,16 +405,8 @@ export function filesView(
       <Box key="tree" flexDirection="column">
       {!(lower(root) in listing) && <Text dimColor>Reading the folder…</Text>}
       {lower(root) in listing && rows.length === 0 && <Text dimColor>This folder is empty.</Text>}
-      {/* Claude moved on while the person was scrolling the tree: the follow waited. */}
-      {files.away ? (
-        <Box key="follow-paused" flexDirection="row" gap={1}>
-          <Text dimColor>Following paused</Text>
-          <Button key="back-to-claude" label="⌖ Back to Claude" plain onPress={() => actions.backToClaude()} />
-        </Box>
-      ) : null}
-      {/* The tree's scroll marks, in place of a scrollbar: a press moves it a page. */}
-      {win.above ? <Button key="tree-above" label={`▲ ${win.above} above`} plain dimColor onPress={() => actions.page(-1)} /> : null}
-      {shown.slice(win.start, win.end).map(({ entry, depth, isOpen }) => {
+      {/* Every row is drawn: the pane scrolls like a page when the tree is long. */}
+      {shown.map(({ entry, depth, isOpen }) => {
         const isDir = entry.kind === 'dir'
         const code = isDir ? dirStatus(git, entry.path) : fileStatus(git, entry.path)
         const tone = flash[lower(entry.path)]
@@ -484,7 +466,6 @@ export function filesView(
           </Button>
         )
       })}
-      {win.below ? <Button key="tree-below" label={`▼ ${win.below} below`} plain dimColor onPress={() => actions.page(1)} /> : null}
       {rows.length > shown.length && <Text dimColor>… {rows.length - shown.length} more rows (close a folder to see them)</Text>}
       </Box>
       )}

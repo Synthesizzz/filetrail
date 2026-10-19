@@ -74,10 +74,8 @@ export type GitInfo = {
 /**
  * `gitOpen`: the git bar shows every kept action, not only the latest. `hideDots`: dotfiles left out of the tree.
  * `touchedOpen`: the card lists every touched file, not only the latest few.
- * `top`: the first tree row on show, the tree scrolling under the pane's fixed head.
- * `away`: the file (lower-cased) Claude touched while the person held the follow by scrolling.
  */
-export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean; touchedOpen?: boolean; top?: number; away?: string }
+export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean; touchedOpen?: boolean }
 
 /** Every file of the project, relative to its root, for the search box; `complete` false when the list was cut short. */
 export type SearchIndex = { files: string[]; complete: boolean }
@@ -159,8 +157,6 @@ declare module 'claude-code' {
       preview: Preview | null
       /** The files Claude touched this session, newest first, eight at most. */
       touched: TouchedFile[]
-      /** The Files tab's head (tabs, card, search) in the pane's rows, as last measured from the wheel; null before. */
-      head: number | null
       /** The files of the history git ignores (lower-cased), left out of History. */
       ignored: string[]
     }

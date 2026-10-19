@@ -4,7 +4,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { DeletedBy, Entry, FilesView, GitActionEntry, GitInfo, GitStage, Hint, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
-import { BROWSE_MS, FLASH_MS, GLIDE_MS, HOLD_MS, clampTop, foldersTo, glide, targetOf, topFor, treeLines, treeRows, treeWindow } from './activity'
+import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
 import { deleteTargets, isCommit, readTargets } from './bash'
@@ -12,8 +12,7 @@ import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
-import { filesView, MAX_ROWS } from './files-view'
-import { spelled } from './now-card'
+import { filesView } from './files-view'
 import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
@@ -26,7 +25,7 @@ import {
 import type { EditCall, StoreIndex } from './history'
 import { historyView, TIMELINE } from './history-view'
 import { MAX_INDEX_FILES, parseLsFiles, SKIP_DIRS } from './search'
-import { joinPath, lower, parentOf, toEntries, visibleRows } from './tree'
+import { joinPath, lower, parentOf, toEntries } from './tree'
 
 export const PANE = 'filetrail'
 
@@ -48,7 +47,6 @@ const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as Tou
 /** The files of the history git ignores (lower-cased): History leaves them out. */
 const ignored = atom({ plugin: 'filetrail', key: 'ignored' } as const, [] as string[])
 /** Kept in the session's state, so a reload starts from the head measured before. */
-const headRows = atom({ plugin: 'filetrail', key: 'head' } as const, null as number | null)
 /** Files the Claude touched list keeps. */
 const MAX_TOUCHED = 8
 // One build at a time: typing fast must not start a listing per key.
@@ -144,19 +142,13 @@ function fire($: EngineInterface, what: string, work: () => Promise<unknown>) {
 const browsed = new Map<string, number>()
 
 /**
- * Opens the folders down to `path` (listing those not listed yet) and scrolls
- * the tree to its row; `select` also selects it. Paths outside the root are left alone.
+ * Opens the folders down to `path` (listing those not listed yet); `select` also selects it. Paths outside the root are left alone.
  * `follow` (Claude touched it): open folders that do not lead to `path` fold, but for
  * those the person browsed lately; asked by the person, the folders opened count as browsed.
  */
 async function reveal($: EngineInterface, path: string, select: boolean, follow = false) {
   const dirs = foldersTo(root, path)
   if (!dirs) return
-  // The person is scrolling the tree: Claude's file is noted for Back to Claude, the tree left be.
-  if (follow && (await $.clock.now()) < hold.until) {
-    await update($, files, f => ({ ...f, away: lower(path) }))
-    return
-  }
   const listed = await read($, listing)
   for (const d of dirs) if (!(lower(d) in listed)) await listDir($, d)
   const want = dirs.map(lower)
@@ -173,84 +165,16 @@ async function reveal($: EngineInterface, path: string, select: boolean, follow 
   } else for (const d of want) browsed.set(d, now)
   for (const d of want) open.add(d)
   await update($, files, f => ({ ...f, expanded: [...open], selected: select ? path : f.selected }))
-  // The tree glides to the row under the fixed head: no pane scroll, so the card stays.
-  await glideTo($, lower(path))
 }
 
-/**
- * The pane's head and the tree under it. On the desktop the pane's window is the desktop's:
- * the wheel moves it before ui.scroll says so, and a mod can put it only at its start or end
- * (seen in traces). The tree is drawn to fit under the head and moves by Claude's glide and
- * the ▲ ▼ buttons. The head's height is measured, not known (the card's rows and the crab's
- * pixels vary), so the pane may overflow: then it scrolls like a page, card and all, and is
- * left where the person puts it. (It used to be sent back to its start on every redraw,
- * which undid the person's scroll each time Claude touched a file.) When the person's wheel
- * moves an overflowing pane, ui.scroll says how many rows it drew, less the tree's lines,
- * so the next draw fits the tree better.
+/*
+ * The whole tree is drawn under the card, and the pane scrolls like a page when it is
+ * long, left where the person puts it. The tree is not moved to Claude's file: on the
+ * desktop the pane's window is the desktop's, and a mod can put it only at its start or
+ * end (seen in traces). It once drew only the rows that fit under the card, moved by a
+ * glide and ▲ ▼ buttons, which left a short tree when the card was tall (seen live).
  */
-/** Large on purpose: a head guessed too big leaves blank rows, too small hides the ▼ below the edge. */
-const HEAD_GUESS = 22
-const pane = { headRows: HEAD_GUESS, fit: 0, treeLines: 0, drawnAt: 0 }
-/** The tabs, the card and the search box take this many rows at least: a smaller head is a misread. */
-const MIN_HEAD_ROWS = 6
-/** How long after a redraw the pane's row count is trusted to be the new layout's. */
-const SETTLE_MS = 300
-/** The head as last measured, kept for the next session: the guess is only for the first. */
-const HEAD_KEY = 'filetrail:head'
 
-/**
- * The person scrolling the tree holds the follow for BROWSE_MS (as a folder they open is
- * left be): the tree stays where they are looking, and what Claude touches meanwhile waits
- * behind Back to Claude. The hold runs out on its own, and the tree goes back to Claude.
- */
-const hold = { until: 0, timer: null as { cancel: () => void } | null }
-
-/** Moves the tree's first row by `by` rows, as the person scrolls it, and holds the follow. */
-async function scrollTree($: EngineInterface, by: number) {
-  const f = await read($, files)
-  const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
-  const top = clampTop((f.top ?? 0) + by, count, Math.max(1, pane.fit - 1))
-  // The person takes over from a glide still under way.
-  gliding++
-  hold.until = (await $.clock.now()) + BROWSE_MS
-  hold.timer?.cancel()
-  hold.timer = $.clock.after(BROWSE_MS, () => void release($).catch(() => undefined))
-  if (top !== (f.top ?? 0)) await update($, files, x => ({ ...x, top }))
-}
-
-/** Ends the hold: the tree goes to the file Claude touched meanwhile, if any. */
-async function release($: EngineInterface) {
-  hold.timer?.cancel()
-  hold.timer = null
-  hold.until = 0
-  const away = (await read($, files)).away
-  if (!away) return
-  await update($, files, f => ({ ...f, away: undefined }))
-  await reveal($, spelled(await read($, listing), away), false, true)
-}
-
-
-/** Counts glides, so a newer one stops an older one mid-way. */
-let gliding = 0
-
-/** Moves the tree's first row, in a few steps, so `path` shows; it moves only when it is out of view. */
-async function glideTo($: EngineInterface, path: string) {
-  const f = await read($, files)
-  const rows = visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).slice(0, MAX_ROWS)
-  const at = rows.findIndex(r => lower(r.entry.path) === path)
-  if (at < 0 || !pane.fit) return
-  const from = f.top ?? 0
-  // Two rows of the window may be the above and below lines.
-  const to = topFor(at, rows.length, Math.max(1, pane.fit - 2), from)
-  const steps = glide(from, to)
-  const mine = ++gliding
-  steps.forEach((top, k) => {
-    $.clock.after(GLIDE_MS * k, () => {
-      if (mine !== gliding) return
-      void update($, files, x => ({ ...x, top })).catch(() => undefined)
-    })
-  })
-}
 
 /**
  * Lights the row Claude touched and, for one file, opens the tree to it: a file Claude
@@ -695,9 +619,6 @@ export const register: Register = on => {
     await update($, live, () => null)
     // Nor would a push or merge left acting in state ever be put down: its timer is gone.
     await update($, stage, () => null)
-    // The head measured in an earlier session, unless this one measured it already.
-    const kept = await $.store.get(HEAD_KEY)
-    if (typeof kept === 'number' && (await read($, headRows)) === null) await update($, headRows, () => kept)
     await listDir($, root)
     scheduleGit($)
     void openPane($)
@@ -906,40 +827,11 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The Files tab's tree is drawn to fit under the head. If the pane overflowed after all
-  // (the card grew), the person's wheel measures the head for the next draw; the pane stays
-  // where they scrolled it. Elsewhere (History, a preview, search results) nothing is measured.
-  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
-    const f = await read($, files)
-    if ((await read($, tab)) !== 'files' || (f.query ?? '').trim() || (await read($, preview))) return next(e)
-    // All the pane drew, less the tree's lines. The person's moves only, from a settled
-    // layout that overflows: the mod's own read a count from before (seen in a trace).
-    const head = e.contentRows - pane.treeLines
-    const settled = (await $.clock.now()) - pane.drawnAt >= SETTLE_MS
-    if (e.origin.kind === 'person' && settled && e.contentRows > e.bodyRows && head >= MIN_HEAD_ROWS && head !== pane.headRows) {
-      pane.headRows = head
-      await update($, headRows, () => head)
-      await $.store.set(HEAD_KEY, head)
-    }
-    return next(e)
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     // The terminal's table carries an Svg that draws nothing (seen in the test kit: an empty
     // Box): left out there, the crab falls back to its blocks and the branch to its glyph.
     const els = $.ui.resolve(e)
     if (e.surface === 'terminal') NO_SVG.add(els)
-    // The tree's room under the head, and the lines it will draw: what the ui.scroll hook
-    // measures the head against.
-    pane.headRows = (await read($, headRows)) ?? HEAD_GUESS
-    pane.drawnAt = await $.clock.now()
-    pane.fit = treeRows(e.props.scroll.bodyRows, pane.headRows)
-    {
-      const f = await read($, files)
-      const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
-      // The Following paused line takes one of the tree's rows, and counts.
-      pane.treeLines = (count ? treeLines(treeWindow(count, f.top ?? 0, pane.fit - (f.away ? 1 : 0))) : 1) + (f.away ? 1 : 0)
-    }
     clearRows()
     const { Box, Text, Button } = els
     const current = await read($, tab)
@@ -983,8 +875,6 @@ export const register: Register = on => {
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
                 toggleTouched: () => fire($, 'listing the touched files', () => update($, files, f => ({ ...f, touchedOpen: !f.touchedOpen }))),
-                page: dir => fire($, 'moving the tree', () => scrollTree($, dir * Math.max(1, pane.fit - 2))),
-                backToClaude: () => fire($, 'going back to Claude', () => release($)),
                 refresh: () => fire($, 'refreshing', async () => {
                   await relist($)
                   await refreshGit($)
@@ -1013,7 +903,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), pane.fit, await read($, stage))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

@@ -81,9 +81,8 @@ Under the card is the **file tree**:
 ### Following Claude
 
 - A file Claude **reads** lights violet with `· reading`. A file it **edits** lights orange with `· writing`, with a bright band sweeping across the name as if it were being typed.
-- The tree opens down to Claude's file and glides to it. Other folders fold, so you can see where Claude is. A folder you opened or closed yourself in the last 30 seconds is left alone.
-- Use `▲ N above` / `▼ N below` to move the tree a page at a time. Following then pauses for 30 seconds, with `⌖ Back to Claude` to jump back.
-- When the card and tree don't fit, the pane scrolls with the wheel like a normal page (the card scrolls with it) and stays where you leave it, even while Claude works.
+- The tree opens down to Claude's file and lights it. Other folders fold, so you can see where Claude is. A folder you opened or closed yourself in the last 30 seconds is left alone.
+- The whole tree is drawn. When it's longer than the pane, scroll with the wheel like a normal page (the card scrolls with it); the pane stays where you leave it, even while Claude works. The pane doesn't scroll itself to Claude's file, so look for the lit row.
 - Bash commands count too: `cat`, `head`, `Get-Content` and the like are followed like a read. `rg`, `grep`, `ls`, `find` light up the folders they search. After a `git commit`, the committed files light green.
 
 ### Git commands
