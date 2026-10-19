@@ -122,7 +122,23 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
 export const plain = (text: string | undefined) => (text ?? '').replace(/[\u00a0\u202f]/g, ' ')
 
 /** The text of the element drawn under `key`, spaces plain; '' when it is not drawn. */
+/**
+ * A row's key as drawn: a shimmering tree row is a fresh instance keyed `row-…~<tone>`
+ * (its clock can only start as it first draws), so a row is found by its plain key or that.
+ */
+export async function rowKeyOf(ui: any, key: string): Promise<string> {
+  if (await ui.find({ key })) return key
+  const lit = (await ui.findAll({ type: 'Client' })).find((c: any) => String(c.key).startsWith(`${key}~`))
+  return lit ? String(lit.key) : key
+}
+
+/** Whether a row is drawn, lit or not. */
+export async function hasRow(ui: any, key: string): Promise<boolean> {
+  return (await ui.find({ key: await rowKeyOf(ui, key) })) !== undefined
+}
+
 export async function rowText(ui: any, key: string): Promise<string> {
+  key = await rowKeyOf(ui, key)
   const el = await ui.find({ key })
   if (el?.type === 'Client') return plain(textOf(await ui.drawn({ in: key })))
   return plain(el?.text)
@@ -138,6 +154,7 @@ export function textOf(node: any): string {
 
 /** The Text runs a row's Client drew, with their props: colours and styles under test. */
 export async function rowRuns(ui: any, key: string): Promise<{ text: string; props: any }[]> {
+  key = await rowKeyOf(ui, key)
   const out: { text: string; props: any }[] = []
   const walk = (n: any) => {
     if (n == null || typeof n !== 'object') return
@@ -170,5 +187,5 @@ export const PANE = {
 
 /** Presses a tree row as its Client does: a post from that row's instance. */
 export async function pressRow(ui: any, key: string): Promise<void> {
-  await ui.post({ press: true }, { in: key })
+  await ui.post({ press: true }, { in: await rowKeyOf(ui, key) })
 }

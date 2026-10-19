@@ -82,6 +82,7 @@ Under the card is the **file tree**, with two views you switch between with `All
 In both views:
 
 - Folders open on a click. Dotfiles are dimmed and `.git` is hidden.
+- A folder's `■` is coloured by its place among the folders beside it (the first blue, then teal, violet, amber, rose, and round again), so neighbouring folders always differ. Its name takes the same colour, unless git has something to say about it (then git's colour wins, so changed folders still stand out). An unchanged file's name takes its folder's colour too; one at the project's top level stays plain.
 - The `•` before a file takes its type's colour: blue TypeScript, gold JavaScript, teal Python, grey-blue Markdown and text, amber JSON/YAML/TOML, pink CSS, orange HTML and notebooks, purple SQL. Other files stay grey. The type badges in the TOUCHED list (`TS`, `MD`) use the same colours.
 - Git status colours each name (yellow modified, green new, red deleted). At the right edge are `+N -N` and a letter (`M`, `A`, `U` untracked, `D`, `R`, `C` conflict). A file with no changes shows when it last changed instead.
 - Folders add up what changed inside them: `?:n` new, `M:n` changed, `D:n` deleted.
@@ -89,7 +90,7 @@ In both views:
 
 ### Following Claude
 
-- A file Claude **reads** lights violet with `· reading`. A file it **edits** lights orange with `· writing`, with a bright band sweeping across the name as if it were being typed.
+- A file Claude **reads** lights violet with `· reading`. A file it **edits** lights orange with `· writing`, with a bright band sweeping across the name as if it were being typed. Every folder above it shimmers along, so you can follow the path down to it.
 - The tree opens down to Claude's file and lights it. Other folders fold, so you can see where Claude is. A folder you opened or closed yourself in the last 30 seconds is left alone.
 - The whole tree is drawn. When it's longer than the pane, scroll with the wheel like a normal page (the card scrolls with it); the pane stays where you leave it, even while Claude works. The pane doesn't scroll itself to Claude's file, so look for the lit row.
 - Bash commands count too: `cat`, `head`, `Get-Content` and the like are followed like a read. `rg`, `grep`, `ls`, `find` light up the folders they search. After a `git commit`, the committed files light green.

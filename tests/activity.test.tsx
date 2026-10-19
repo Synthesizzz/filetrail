@@ -4,7 +4,7 @@ import type { Turn } from '../types'
 import { FLASH_MS, HOLD_MS, foldersTo, targetOf } from '../hooks/activity'
 import { READ_COLOR, SELECTED_BG, TONE_COLOR, TONE_SHIMMER } from '../hooks/files-view'
 import { BAND_STEP, shimmer, TICK_MS } from '../hooks/row'
-import { DONE, KEY, PANE, START, pressRow, rowRuns, rowText, world } from './world'
+import { DONE, KEY, PANE, START, pressRow, rowKeyOf, rowRuns, rowText, world } from './world'
 
 test('each tone paints with a colour the desktop draws (not the permission theme key)', () => {
   // Seen live: the desktop drew "· reading" in plain text with `permission`.
@@ -38,7 +38,7 @@ async function letterColors(ui: any, key: string): Promise<string[]> {
     if (n.type === 'Text' && typeof letter === 'string' && [...letter].length === 1 && n.props?.color) out.push(n.props.color)
     else walk(kids)
   }
-  walk(await ui.drawn({ in: key }))
+  walk(await ui.drawn({ in: await rowKeyOf(ui, key) }))
   return out
 }
 

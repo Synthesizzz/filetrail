@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Turn } from '../types'
-import { FOLDER_COLOR, GIT_HEX, SELECTED_BG, typeColor } from '../hooks/files-view'
-import { DONE, KEY, PANE, START, hasText, pressRow, rowRuns, rowText, textOf, world } from './world'
+import { FOLDER_COLOR, folderColor, GIT_HEX, SELECTED_BG, typeColor } from '../hooks/files-view'
+import { DONE, KEY, PANE, START, hasRow, hasText, pressRow, rowRuns, rowText, textOf, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
   'C:\\work\\demo': [['src', 'dir'], ['.git', 'dir'], ['README.md', 'file'], ['tmp', 'dir']],
@@ -95,12 +95,12 @@ test('a Write lists its folder again, so the new file shows', async ($, on) => {
   await clock.advance(1000)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await pressRow(ui, rowKey('C:/work/demo/src'))
-  expect(await ui.find({ key: rowKey('C:/work/demo/src/b.ts') })).toBeUndefined()
+  expect(await hasRow(ui, rowKey('C:/work/demo/src/b.ts'))).toBe(false)
 
   await $.turn.start({ text: 'add b', turnId: 't1' })
   dirs['C:/work/demo/src']!.push(['b.ts', 'file'])
   await $.tool.call({ tool: 'Write', file_path: 'C:\\work\\demo\\src\\b.ts', content: 'b\n' })
-  expect(await ui.find({ key: rowKey('C:/work/demo/src/b.ts') })).toBeDefined()
+  expect(await hasRow(ui, rowKey('C:/work/demo/src/b.ts'))).toBe(true)
   await ui.unmount()
 })
 
@@ -156,4 +156,25 @@ test('typeColor: a colour per file type, by extension and ignoring case; none fo
   expect(typeColor('C:/w/app.ts')).not.toBe(typeColor('C:/w/app.js'))
   for (const p of ['a.py', 'README.md', 'package.json', 'ci.yml', 'site.css', 'index.html', 'q.sql', 'lab.ipynb']) expect([p, typeof typeColor(p)]).toEqual([p, 'string'])
   for (const p of ['Makefile', 'logo.png', '.env']) expect([p, typeColor(p)]).toEqual([p, undefined])
+})
+
+test('a folder\'s marker takes its place among its siblings\' colour, so neighbours differ; its name keeps git\'s', async ($, on) => {
+  expect(folderColor(0)).toBe(FOLDER_COLOR)
+  expect(folderColor(1)).not.toBe(folderColor(0))
+  expect(folderColor(5)).toBe(folderColor(0))
+  const { clock } = world(on, { dirs: { 'C:/work/demo': [['docs', 'dir'], ['src', 'dir'], ['a.md', 'file']], 'C:/work/demo/src': [['deep', 'dir']], 'C:/work/demo/src/deep': [['x.ts', 'file']] } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await pressRow(ui, rowKey('C:/work/demo/src'))
+  const marker = async (path: string) => (await rowRuns(ui, rowKey(path))).find(r => r.text.startsWith('■'))?.props.color
+  expect(await marker('C:/work/demo/docs')).toBe(folderColor(0))
+  expect(await marker('C:/work/demo/src')).toBe(folderColor(1))
+  // The first folder inside src: the first colour again.
+  expect(await marker('C:/work/demo/src/deep')).toBe(folderColor(0))
+  // With nothing for git to say, a folder's name takes its marker's colour too.
+  const name = async (path: string, text: string) => (await rowRuns(ui, rowKey(path))).find(r => r.text === text)?.props.color
+  expect(await name('C:/work/demo/src', 'src/')).toBe(folderColor(1))
+  expect(await name('C:/work/demo/docs', 'docs/')).toBe(folderColor(0))
+  await ui.unmount()
 })

@@ -237,6 +237,28 @@ export function gitLetter(code: string): string {
 
 /** The folder colour, filetree's accent: a blue that reads on light and dark backgrounds. */
 export const FOLDER_COLOR = '#5b9bd5'
+/**
+ * A folder marker's colour by its place among the folders beside it, so neighbours always
+ * differ: the first filetree's blue, then teal, violet, amber and rose, round again past
+ * five (seen live: by depth, the folders side by side at the top all came out one blue).
+ * Soft and mid-dark, for light and dark panes alike; the folder's name keeps git's colour.
+ */
+export const FOLDER_COLORS = [FOLDER_COLOR, '#3fb8af', '#9b87f5', '#d9a441', '#d97a9a'] as const
+
+/** The colour of a folder's ■, the `index`-th folder (from 0) in its parent's listing. */
+export function folderColor(index: number): string {
+  return FOLDER_COLORS[index % FOLDER_COLORS.length]!
+}
+
+/**
+ * Each folder's place among the folders of its parent (lower-cased path to index), from the
+ * listings: the same in the All tree and in Now, whatever of its siblings Now leaves out.
+ */
+export function folderIndexes(listing: Readonly<Record<string, Entry[]>>): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const entries of Object.values(listing)) entries.filter(e => e.kind === 'dir').forEach((e, k) => out.set(lower(e.path), k))
+  return out
+}
 /** The selected row's fill: filetree's selection grey, at a third so the text stays legible in either theme. */
 export const SELECTED_BG = '#6b728055'
 
@@ -394,6 +416,10 @@ export function filesView(
       || (r.entry.kind === 'dir' ? nowDirs : nowFiles).has(lower(r.entry.path)))
     : visibleRows(root, listing, files.expanded, files.hideDots === true)
   const shown = rows.slice(0, MAX_ROWS)
+  const folderAt = folderIndexes(listing)
+  // Every folder above a lit file shimmers with it, in its tone, so Claude's place reads from the top.
+  const litAbove = new Map<string, Tone>()
+  for (const [path, tone] of Object.entries(flash)) for (const d of foldersTo(root, path) ?? []) if (!litAbove.has(lower(d))) litAbove.set(lower(d), tone)
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
   const tools: (Tool & { run: () => void })[] = [
@@ -470,28 +496,37 @@ export function filesView(
         const isDir = entry.kind === 'dir'
         const code = isDir ? dirStatus(git, entry.path) : fileStatus(git, entry.path)
         const tone = flash[lower(entry.path)]
+        // A folder above Claude's file shimmers as it does, its word left to the file.
+        const above = isDir && !tone ? litAbove.get(lower(entry.path)) : undefined
         const color = tone ? TONE_COLOR[tone] : statusColor(code)
         const edits = isDir ? 0 : counts.get(lower(entry.path)) ?? 0
         const lines = isDir ? null : lineCounts(git, entry.path)
         const isSelected = lower(entry.path) === selected
-        const key = `row-${lower(entry.path)}`
+        // A row that shimmers is drawn by a fresh instance, keyed by its tone: a surface's
+        // clock may only start as an instance first draws (seen live: a row on show before
+        // Claude touched it never shimmered, while one drawn lit did).
+        const shimmer = tone ?? above
+        const key = `row-${lower(entry.path)}${shimmer ? `~${shimmer}` : ''}`
         const press = () => (isDir ? (now ? actions.openInAll(entry) : actions.toggle(entry)) : actions.select(entry))
         // The desktop draws no `inverse`: a selected file also gets a marker and bold, which every surface shows.
         // The indent is non-breaking spaces in a monospace run: the desktop collapses leading plain spaces,
         // and a proportional font would set the arrow and the blank slot at different widths.
         // As filetree draws on the desktop (its Nerd Font icons have no glyph there): a blue
-        // ■ for a folder, a • for a file in its type's colour (grey when not listed, the name
+        // ■ for a folder in its place's colour, a • for a file in its type's colour (grey when not listed, the name
         // keeping git's colour); a dotfile's name and marker are dimmed unless git or Claude colours it.
         const dotfile = entry.name.startsWith('.')
         const segs: Seg[] = [
           // The selected row is filled where a Client draws it; a marker stands in elsewhere.
           { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected && !Client ? '›' : NBSP) + NNBSP, mono: true },
-          isDir ? { t: '■' + NNBSP, c: FOLDER_COLOR, dim: dotfile }
+          isDir ? { t: '■' + NNBSP, c: folderColor(folderAt.get(lower(entry.path)) ?? 0), dim: dotfile }
             : { t: '•' + NNBSP, ...(!dotfile && typeColor(entry.path) ? { c: typeColor(entry.path)! } : { dim: true }) },
           {
             t: entry.name + (isDir ? '/' : ''), name: true,
-            ...(color ? { c: color } : dotfile ? { dim: true } : {}),
-            ...(tone || isSelected ? { b: true } : {}), ...(tone ? { sh: TONE_SHIMMER[tone] } : {}),
+            // git's colour (or Claude's) when it has one; else a folder's name takes its marker's
+            // colour, and a file's its folder's (a file at the root keeps the plain colour).
+            ...(color ? { c: color } : dotfile ? { dim: true } : isDir ? { c: folderColor(folderAt.get(lower(entry.path)) ?? 0) }
+              : folderAt.has(lower(parentOf(entry.path))) ? { c: folderColor(folderAt.get(lower(parentOf(entry.path)))!) } : {}),
+            ...(tone || isSelected ? { b: true } : {}), ...(shimmer ? { sh: TONE_SHIMMER[shimmer] } : {}),
           },
         ]
         if (tone) segs.push({ t: `${NNBSP}· ${TONE_WORD[tone]}`, c: TONE_COLOR[tone], b: true, sh: TONE_SHIMMER[tone] })

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { BROWSE_MS } from '../hooks/activity'
-import { PANE, START, hasText, pressRow, world } from './world'
+import { PANE, START, hasRow, hasText, pressRow, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
   'C:\\work\\demo': [['src', 'dir'], ['docs', 'dir'], ['notes', 'dir']],
@@ -15,7 +15,7 @@ const SRC = rowKey('C:/work/demo/src')
 const DEEP = rowKey('C:/work/demo/src/deep')
 const DOCS = rowKey('C:/work/demo/docs')
 const NOTES = rowKey('C:/work/demo/notes')
-const shows = async (ui: any, key: string) => (await ui.find({ key })) !== undefined
+const shows = (ui: any, key: string) => hasRow(ui, key)
 
 test('following Claude opens the folder it works in and folds the ones it left', async ($, on) => {
   const { clock } = world(on, { dirs: DIRS })

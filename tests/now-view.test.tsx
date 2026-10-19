@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DONE, PANE, START, hasText, pressRow, world } from './world'
+import { DONE, PANE, START, hasRow, hasText, pressRow, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
   'C:\\work\\demo': [['src', 'dir'], ['docs', 'dir'], ['README.md', 'file']],
@@ -10,7 +10,7 @@ const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
 }
 const FILES = { 'C:\\work\\demo\\src\\a.ts': 'a\n', 'C:\\work\\demo\\src\\deep\\x.ts': 'x\n', 'C:\\work\\demo\\docs\\guide.md': '#\n' }
 const rowKey = (path: string) => `row-${path.toLowerCase()}`
-const shows = async (ui: any, path: string) => (await ui.find({ key: rowKey(path) })) !== undefined
+const shows = (ui: any, path: string) => hasRow(ui, rowKey(path))
 
 test('Now shows only the way down to this turn\'s files, keeps them once the turn ends, and starts empty with the next', async ($, on) => {
   const { clock, store } = world(on, { dirs: DIRS, files: FILES })
