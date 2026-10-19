@@ -21,9 +21,11 @@ export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boole
  * `wrap` lets the runs flow onto further lines (a turn's title) instead of fitting
  * one line (a tree row). `hoverAt` is the run underlined under the pointer: the
  * name, unless said. `bg` fills the row (the selected one). `mono` sets every run in
- * the monospace face, so columns line up from row to row.
+ * the monospace face, so columns line up from row to row. `reveal` types the row in, left to
+ * right, when it first shows (a touched file as the card's handle lets more in), rather
+ * than have it pop in whole: a list can only grow a line at a time.
  */
-export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number; bg?: string; mono?: boolean }
+export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number; bg?: string; mono?: boolean; reveal?: boolean }
 /** What a row posts: a click, the second click of a double-click, or a right-click (shift for the whole path). */
 export type RowPost = { press: true } | { open: true } | { copy: true; full: boolean }
 
@@ -31,7 +33,25 @@ export type RowPost = { press: true } | { open: true } | { copy: true; full: boo
 export const DOUBLE_MS = 450
 
 /** `ref` is mutable on purpose: the running timer is not a value to redraw on. */
-type Local = { hover: boolean; phase: number; ref: { stop?: () => void; lastDown?: number } }
+type Local = { hover: boolean; phase: number; shown?: number; ref: { stop?: () => void; lastDown?: number; revealStop?: () => void } }
+
+/** A row typing itself in: a step every REVEAL_MS, the whole row in REVEAL_STEPS steps (about 150 ms). */
+export const REVEAL_MS = 30
+export const REVEAL_STEPS = 5
+
+/**
+ * The runs with only their first `shown` letters showing, counted across the row; the rest
+ * are non-breaking spaces, so the row keeps its width and nothing moves as it types in.
+ */
+export function revealRuns(segs: readonly Seg[], shown: number): Seg[] {
+  let left = shown
+  return segs.map(s => {
+    const chars = [...s.t]
+    const keep = Math.max(0, Math.min(chars.length, left))
+    left -= chars.length
+    return keep === chars.length ? s : { ...s, t: chars.slice(0, keep).join('') + '\u00a0'.repeat(chars.length - keep) }
+  })
+}
 
 /**
  * How often the band moves one step, and how far a step goes in letters. A 90 ms tick of
@@ -90,8 +110,24 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
   const { Box, Text } = surface.elements
   let state = surface.state
   if (state === undefined) {
-    state = { hover: false, phase: 0, ref: {} }
+    state = { hover: false, phase: 0, ref: {}, ...(props.reveal ? { shown: 0 } : {}) }
     surface.setState(state)
+    // Typing in: a few steps, then the clock stops for good.
+    if (props.reveal) {
+      const total = props.segs.reduce((n, s) => n + [...s.t].length, 0)
+      const step = Math.max(1, Math.ceil(total / REVEAL_STEPS))
+      const ref = state.ref
+      ref.revealStop = surface.every(REVEAL_MS, () => {
+        const cur = surface.state
+        if (!cur) return
+        const shown = (cur.shown ?? total) + step
+        if (shown >= total) {
+          ref.revealStop?.()
+          ref.revealStop = undefined
+          surface.setState({ ...cur, shown: undefined })
+        } else surface.setState({ ...cur, shown })
+      })
+    }
   }
   // The clock runs only while a run shimmers, and stops once the row is quiet again.
   const lit = props.segs.some(s => s.sh?.length)
@@ -126,7 +162,8 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
   // Once a click gave it the focus, Enter presses it again, as on a Button.
   surface.onKey(e => { if (e.key === 'return') surface.post({ press: true } satisfies RowPost) })
   const hoverAt = props.hoverAt ?? nameAt(props.segs)
-  const fitted = props.wrap ? props.segs : fitRow(props.segs, surface.columns)
+  const whole = props.wrap ? props.segs : fitRow(props.segs, surface.columns)
+  const fitted = state.shown === undefined ? whole : revealRuns(whole, state.shown)
   const runs = fitted.map((s, i) => {
     const style = {
       ...(s.c ? { color: s.c } : {}),

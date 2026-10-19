@@ -308,9 +308,9 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
   const more = touched.length - rows
   const Client = 'Client' in els ? els.Client : undefined
   if (!touched.length) return []
-  // The handle along the card's bottom border: dragged, it shows more or fewer touched files.
+  // The handle along the card's bottom border: held and dragged, it previews the size; let go, the list takes it.
   const handle = Client
-    ? [<Client key="card-handle" module="./handle.tsx" width="100%" props={{ rows: Math.min(rows, touched.length), max: Math.min(TOUCHED_MAX, touched.length) } satisfies HandleProps} />]
+    ? [<Client key="card-handle" module="./handle.tsx" width="100%" props={{ rows: Math.min(rows, touched.length), max: Math.min(TOUCHED_MAX, touched.length), names: touched.slice(0, TOUCHED_MAX).map(f => splitPath(relTo(root, f.path)).name) } satisfies HandleProps} />]
     : []
   return [
     <Box key="touched" flexDirection="column" gap="xs">
@@ -342,7 +342,8 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
           rowCopies.set(key, (full, surface) => actions.copy(f.path, full, surface))
           // Monospace, as the tree's rows: the row fits itself by counting cells (seen live: a
           // proportional name was cut short with room to spare).
-          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true } satisfies RowProps} />
+          // A touched file types itself in as it joins the list (the handle let it in, or Claude touched it).
+          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, reveal: true } satisfies RowProps} />
         }
         return <Text key={key}>{segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.dim ? { dimColor: true } : {})}>{s.t}</Text>)}</Text>
       })}

@@ -925,11 +925,11 @@ export const register: Register = on => {
     const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown; tool?: unknown; resize?: unknown; end?: unknown } | null
     if (e.requestId !== PANE || !data || typeof data !== 'object') return next(e)
     if (typeof data.tool === 'string' && toolPresses.has(data.tool)) { toolPresses.get(data.tool)!(); return {} }
-    // The card's handle, dragged: as many touched files as it asks, kept for the next session once let go.
+    // The card's handle, let go: as many touched files as it asks, kept for the next session.
     if (typeof data.resize === 'number' && e.element === 'card-handle') {
       const rows = Math.max(0, Math.min(TOUCHED_MAX, Math.round(data.resize)))
       await update($, files, f => ({ ...f, touchedRows: rows, touchedOpen: false }))
-      if (data.end === true) await $.store.set(ROWS_KEY, rows)
+      await $.store.set(ROWS_KEY, rows)
       return {}
     }
     if (data.press === true && rowPresses.has(e.element)) { rowPresses.get(e.element)!(); return {} }

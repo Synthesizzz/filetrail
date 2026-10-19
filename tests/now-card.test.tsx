@@ -100,6 +100,8 @@ test('Claude touched lists the files read and edited, newest first, with a pill 
   expect(await ui.find({ key: 'touched-more' })).toBeUndefined()
   const rows = (await ui.findAll({ type: 'Client' })).map((c: any) => c.key).filter((k: string) => k?.startsWith('touched-'))
   expect(rows).toEqual(['touched-c:/work/demo/readme.md', 'touched-c:/work/demo/src/app.ts'])
+  // The rows type themselves in on their own frame clock.
+  await ui.advance(500)
   // Only the file Claude is on is lit: the one it left says what was done, unfilled.
   expect(await rowText(ui, rows[0])).toMatch(/^ MD  README\.md\s+Editing $/)
   expect(await rowText(ui, rows[1])).toMatch(/^ TS  App\.ts Src\s+Read $/)
