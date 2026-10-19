@@ -104,11 +104,17 @@ export type GitIcon = 'branch' | 'merge' | 'commit' | 'push' | 'pull' | 'pr' | '
 /** A git action the crab acts out in the card, beyond a commit: pushing, or merging. */
 export type GitPose = 'push' | 'merge'
 
+/** What the card's crab acts out besides a file: a push, a merge, a search, a shell command, tests, a helper, or an error. */
+export type StagePose = GitPose | 'search' | 'command' | 'test' | 'agent' | 'error'
+
 /**
- * The git action the card's crab acts out: running, then done for FLASH_MS; null once
- * it is over, or when it failed. `target` is what it named (a branch, a remote).
+ * What Claude is doing that the card's crab acts out, besides reading or editing a file:
+ * running, then done (or failed) for FLASH_MS, then null. `target` is what it named (a
+ * branch, a pattern, a command), `dir` a dimmed detail after it, `word` the card's word
+ * when it is not the pose's own (an error's "Edit failed"), `at` when it started: the
+ * newest of a stage and a touched file is the one shown.
  */
-export type GitStage = { pose: GitPose; state: 'running' | 'ok'; target: string }
+export type Stage = { pose: StagePose; state: 'running' | 'ok' | 'failed'; target: string; dir?: string; word?: string; at: number }
 
 /** One git action in the bar at the bottom of the Files tab. */
 export type GitActionEntry = {
@@ -142,7 +148,7 @@ declare module 'claude-code' {
       /** Paths Claude touched in the last moments (lower-cased), lit in the tree. */
       flash: Record<string, Tone>
       /** The path Claude touched last (lower-cased) and how: marked ◂ until another is touched. */
-      last: { path: string; tone: Tone } | null
+      last: { path: string; tone: Tone; at?: number } | null
       /** What the band above the prompt offers to replay; null once replayed or before any edit. */
       hint: Hint | null
       /** The turn running now, while it has edits: shown as "Now" on the timeline until it is saved. */
@@ -151,8 +157,10 @@ declare module 'claude-code' {
       index: SearchIndex | null
       /** The last git actions run through Bash, newest last: running, then done or failed, until newer ones push them out. */
       actions: GitActionEntry[]
-      /** The push or merge the card's crab acts out, while it runs and a moment after; null otherwise. */
-      stage: GitStage | null
+      /** What the crab acts out besides a file (a push, a search, tests, an error), while it runs and a moment after; null otherwise. */
+      stage: Stage | null
+      /** Whether a main-loop turn is running: the crab thinks while nothing else shows. */
+      working: boolean
       /** The file shown in place of the tree, or null for the tree. */
       preview: Preview | null
       /** The files Claude touched this session, newest first, eight at most. */

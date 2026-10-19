@@ -12,7 +12,7 @@ It is built for the Claude Code desktop app and also works in the terminal.
 ## Highlights
 
 - **Follows Claude around.** When Claude reads or edits a file, its row lights up and the tree opens to it.
-- **A crab that acts it out.** It reads a book, writes with a pencil, cheers a commit, tears up a deleted file, sends an arrow up on a push, joins two branches on a merge, and falls asleep when Claude is idle.
+- **A crab that acts it out.** It reads a book, writes with a pencil, cheers a commit, tears up a deleted file, sends an arrow up on a push, joins two branches on a merge, sweeps a magnifying glass on a search, types at a tiny terminal, checks a clipboard of tests (then cheers or sweats), gets dizzy after an error, thinks with a bubble, works beside a little helper crab, and falls asleep when Claude is idle.
 - **Git at a glance.** The branch, ahead/behind counts, changed lines, and the last git commands Claude ran, with GitHub's own icons.
 - **Every edit, kept.** A History timeline of each turn's changes, with diffs you can step through, replay or export as Markdown.
 - **Deleted files aren't lost.** Files that Claude, or you, delete are recorded with a copy of their text, so you can check them later.
@@ -68,7 +68,9 @@ At the top is a **card** showing what's happening right now. Roughly:
 ```
 
 - **Title bar:** the folder, the toolbar, and chips for the branch (`↑` ahead, `↓` behind), the repo's changes (`+3 -1 ?:2 M:1` or `clean`), and the last git command Claude ran (`N more` lists the older ones).
-- **Right now:** the crab, what Claude is doing ("Reading client.test.js · tests"), and a coloured pill: violet reading, orange editing, green committed, red deleted. A push (teal) or merge (purple) takes over the card while it runs and for 5 seconds after. Between actions it says `Idle` and names the last file touched.
+- **Right now:** the crab, what Claude is doing ("Reading client.test.js · tests"), and a coloured pill: violet reading, orange editing, green committed, red deleted. Between actions it says `Idle` and names the last file touched.
+- **More than files:** the card also shows a push (teal), a merge (purple), a search (amber, `Searching "greet" · src`), a shell command in Bash or PowerShell (blue, `Running npm run build`), tests (`Testing…`, then a green `Tests passed` or a red `Tests failed`), a helper Claude started (pink, `Helper review the diff`), and any tool call that failed or was refused (red, `Edit failed · app.ts`). Each shows while it runs and for 5 seconds after. When several things happen, the newest is shown; a helper keeps the card while it works. While a turn runs and nothing else is on, the crab is `Thinking`.
+- **What counts as tests:** `npm`/`pnpm`/`yarn`/`bun test`, `jest`, `vitest`, `mocha`, `playwright test`, `pytest` (or `python -m pytest`), `go test`, `cargo test`, `dotnet test`, `mvn`/`gradle test`, `dbt test`, `deno test` and `claude plugin test`.
 - **TOUCHED:** the files Claude read, edited, committed or deleted this session, and any you deleted, newest first. Three are shown, with `+N more` for the rest (eight at most). Click a row to jump to it in the tree, double-click to view it, right-click to copy its path.
 
 Under the card is the **file tree**:

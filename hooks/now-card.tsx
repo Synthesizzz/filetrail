@@ -1,15 +1,17 @@
 // The "Right now" card at the top of the Files tab: what Claude is doing this moment
-// (reading, editing, committing a file, pushing, merging), or that it is idle and what it
-// touched last.
+// (reading, editing, committing a file, pushing, merging, searching, running a command or
+// tests, working with a helper, hitting an error, thinking), or that it is idle and what
+// it touched last.
 // Below it, the files Claude touched this session. A bordered card and a pill with a
 // background draw on the desktop (seen live); the crab beside the words is an Svg.
 
 import type { EngineInterface, RenderElement } from 'claude-code'
 
-import type { Entry, GitPose, GitStage, Tone } from '../types'
+import type { Entry, Stage, StagePose, Tone } from '../types'
 import { relTo } from './history'
 import { splitPath } from './paths'
-import { crabSvg, CRAB_ROWS, GONE, MERGE, PUSH } from './crab'
+import { AGENT, COMMAND, crabSvg, CRAB_ROWS, GONE, MERGE, PUSH, SEARCH, TEST } from './crab'
+import type { Pose } from './crab'
 import { lower } from './tree'
 import { svgOf } from './octicons'
 
@@ -23,10 +25,27 @@ export const NOW_STYLE: Record<Tone, { doing: string; did: string; pill: string;
   delete: { doing: 'deleting', did: 'deleted', pill: 'Deleted', glyph: '✕', color: GONE, fill: `${GONE}33` },
 }
 const IDLE = { glyph: '◌', color: '#808a96', fill: '#808a9622' }
-/** A push's and a merge's words and colours, the git bar's (sync teal, merge purple): running, then done. */
-export const STAGE_STYLE: Record<GitPose, { running: string; done: string; color: string; fill: string }> = {
-  push: { running: 'Pushing', done: 'Pushed', color: PUSH, fill: `${PUSH}33` },
-  merge: { running: 'Merging', done: 'Merged', color: MERGE, fill: `${MERGE}33` },
+const PASSED = '#22c55e'
+/**
+ * Each stage's word while it runs, once done, and when it failed, and its colour (a push
+ * and a merge take the git bar's sync teal and merge purple). A failure is red.
+ */
+export const STAGE_STYLE: Record<StagePose, { running: string; done: string; failed: string; color: string }> = {
+  push: { running: 'Pushing', done: 'Pushed', failed: 'Push failed', color: PUSH },
+  merge: { running: 'Merging', done: 'Merged', failed: 'Merge failed', color: MERGE },
+  search: { running: 'Searching', done: 'Searched', failed: 'Search failed', color: SEARCH },
+  command: { running: 'Running', done: 'Ran', failed: 'Command failed', color: COMMAND },
+  test: { running: 'Testing', done: 'Tests passed', failed: 'Tests failed', color: TEST },
+  agent: { running: 'Helper', done: 'Helper done', failed: 'Helper failed', color: AGENT },
+  error: { running: 'Failed', done: 'Failed', failed: 'Failed', color: GONE },
+}
+
+/** The card's word, colour and the crab's pose for a stage: tests that ended pass or fail, a failure is red. */
+export function stageLook(stage: Stage): { word: string; color: string; pose: Pose } {
+  const s = STAGE_STYLE[stage.pose]
+  const word = stage.word ?? (stage.state === 'running' ? s.running : stage.state === 'ok' ? s.done : s.failed)
+  if (stage.pose === 'test' && stage.state !== 'running') return stage.state === 'ok' ? { word, color: PASSED, pose: 'passed' } : { word, color: GONE, pose: 'failed' }
+  return { word, color: stage.state === 'failed' ? GONE : s.color, pose: stage.pose }
 }
 
 /** A path as the tree spells it: `last` keeps it lower-cased, the listing has the real spelling. */
@@ -38,24 +57,29 @@ export function spelled(listing: Readonly<Record<string, Entry[]>>, path: string
 
 export function nowCard(
   els: Els, root: string, listing: Readonly<Record<string, Entry[]>>,
-  last: { path: string; tone: Tone } | null, flash: Readonly<Record<string, Tone>>,
+  last: { path: string; tone: Tone; at?: number } | null, flash: Readonly<Record<string, Tone>>,
   sections: readonly RenderElement[] = [],
   header: readonly RenderElement[] = [],
   narrow = false,
-  stage: GitStage | null = null,
+  stage: Stage | null = null,
+  /** A main-loop turn is running: with nothing else to show, the crab thinks. */
+  working = false,
 ) {
   const { Box, Text } = els
   const Svg = svgOf(els)
   const active = last ? flash[last.path] : undefined
   const where = last ? splitPath(relTo(root, spelled(listing, last.path))) : null
-  // A push or a merge running, or just done, comes before the file Claude is on: the crab
-  // acts it out, the pill says it, and the line names what it went to (a branch, a remote).
-  const git = stage ? STAGE_STYLE[stage.pose] : null
-  const style = git && stage
-    ? { pill: stage.state === 'running' ? git.running : git.done, doing: (stage.state === 'running' ? git.running : git.done).toLowerCase(), color: git.color, fill: git.fill, name: stage.target, dir: '' }
-    : active && where ? { ...NOW_STYLE[active], name: where.name, dir: where.dir } : null
+  // The newest of a stage (a search, a command, a push…) and the file Claude is on is
+  // shown; a helper at work keeps the card while it runs, as its own reads come in too.
+  const stageWins = !!stage && (!active || (stage.pose === 'agent' && stage.state === 'running') || stage.at >= (last?.at ?? 0))
+  const look = stage && stageWins ? stageLook(stage) : null
+  const style = stage && look
+    ? { pill: look.word, doing: look.word.toLowerCase(), color: look.color, fill: `${look.color}33`, name: stage.target, dir: stage.dir ?? '' }
+    : active && where ? { ...NOW_STYLE[active], name: where.name, dir: where.dir }
+    : working ? { pill: 'Thinking', doing: 'thinking', color: IDLE.color, fill: IDLE.fill, name: '', dir: '' } : null
+  const pose: Pose = look ? look.pose : active ?? (working ? 'think' : 'idle')
   const icon = style ?? IDLE
-  const crab = crabSvg(stage ? stage.pose : active ?? 'idle', style ? `Crab ${style.doing}${style.name ? ` ${style.name}` : ''}` : 'Crab asleep: Claude is idle')
+  const crab = crabSvg(pose, style ? `Crab ${style.doing}${style.name ? ` ${style.name}` : ''}` : 'Crab asleep: Claude is idle')
   return (
     // minWidth 0 lets the card shrink with the pane; what still does not fit is clipped
     // at its border, never drawn past it (seen live: a long name ran out of the card).

@@ -188,7 +188,7 @@ test('a push: the crab sends an arrow up and the pill says Pushed, then the card
   await ui.unmount()
 })
 
-test('a merge: the crab joins two branches and the pill says Merged; a failed one is not acted out', async ($, on) => {
+test('a merge: the crab joins two branches and the pill says Merged; a failed one says so in red, then goes', async ($, on) => {
   const { clock } = world(on, { dirs: DIRS, git: GIT })
   await $.session.start(START)
   await clock.advance(1000)
@@ -201,6 +201,9 @@ test('a merge: the crab joins two branches and the pill says Merged; a failed on
   await $.tool.call({ tool: 'Bash', command: 'git merge other --fail' })
   await clock.advance(200)
   expect(await hasText(ui, 'Merged other')).toBe(false)
+  expect(await hasText(ui, 'Merge failed other')).toBe(true)
+  expect(await ui.find({ key: 'now-card' })).toMatchObject({ props: { borderColor: GONE } })
+  await clock.advance(FLASH_MS + 100)
   expect((await crabOf(ui))?.props?.alt).toBe('Crab asleep: Claude is idle')
   await ui.unmount()
 })

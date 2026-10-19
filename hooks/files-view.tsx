@@ -3,7 +3,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitActionKind, GitIcon, GitInfo, GitStage, Preview, SearchIndex, Tone, TouchedFile, Turn } from '../types'
+import type { Entry, FilesView, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
@@ -323,11 +323,13 @@ export function statusColor(code: string): string | undefined {
 export function filesView(
   els: Els, root: string, listing: Readonly<Record<string, Entry[]>>, files: FilesView,
   git: GitInfo | null, turns: readonly Turn[], flash: Readonly<Record<string, Tone>>,
-  last: { path: string; tone: Tone } | null, actions: FilesActions, width = 60,
+  last: { path: string; tone: Tone; at?: number } | null, actions: FilesActions, width = 60,
   searchIndex: SearchIndex | null = null, gitLog: readonly GitActionEntry[] = [], preview: Preview | null = null,
   touched: readonly TouchedFile[] = [],
-  /** The push or merge the card's crab acts out, or null. */
-  stage: GitStage | null = null,
+  /** What the card's crab acts out besides a file (a push, a search, tests…), or null. */
+  stage: Stage | null = null,
+  /** A main-loop turn is running, for the crab's thinking. */
+  working = false,
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -374,7 +376,7 @@ export function filesView(
               )}
           </Box>,
         branchChips(els, git, gitLog, files.gitOpen === true, actions),
-      ], width < NARROW_COLUMNS, stage)}
+      ], width < NARROW_COLUMNS, stage, working)}
       {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">

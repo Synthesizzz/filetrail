@@ -3,11 +3,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeletedBy, Entry, FilesView, GitActionEntry, GitInfo, GitStage, Hint, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
+import type { DeletedBy, Entry, FilesView, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
-import { deleteTargets, isCommit, readTargets } from './bash'
+import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
 import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
@@ -36,12 +36,13 @@ const listing = atom({ plugin: 'filetrail', key: 'listing' } as const, {} as Rec
 const git = atom({ plugin: 'filetrail', key: 'git' } as const, null as GitInfo | null)
 const files = atom({ plugin: 'filetrail', key: 'files' } as const, { expanded: [], selected: null } as FilesView)
 const flash = atom({ plugin: 'filetrail', key: 'flash' } as const, {} as Record<string, Tone>)
-const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone } | null)
+const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone; at?: number } | null)
 const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | null)
 const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | null)
 const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as SearchIndex | null)
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
-const stage = atom({ plugin: 'filetrail', key: 'stage' } as const, null as GitStage | null)
+const stage = atom({ plugin: 'filetrail', key: 'stage' } as const, null as Stage | null)
+const working = atom({ plugin: 'filetrail', key: 'working' } as const, false)
 const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as Preview | null)
 const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as TouchedFile[])
 /** The files of the history git ignores (lower-cased): History leaves them out. */
@@ -190,11 +191,11 @@ async function touch($: EngineInterface, target: Target) {
     if (onFile && onFile !== k) await unlight($, onFile)
     onFile = k
   }
+  const at = await $.clock.now()
   await update($, flash, f => ({ ...f, [k]: target.tone }))
-  await update($, last, () => ({ path: k, tone: target.tone }))
+  await update($, last, () => ({ path: k, tone: target.tone, at }))
   // A file read, written, committed or deleted joins the Claude touched list (a searched folder does not).
   if (target.follow || target.tone === 'commit' || target.tone === 'delete') {
-    const at = await $.clock.now()
     const entry: TouchedFile = { path: normPath(target.path), tone: target.tone, at, ...(target.by ? { by: target.by } : {}) }
     await update($, touched, list => [entry, ...list.filter(f => lower(f.path) !== k)].slice(0, MAX_TOUCHED))
   }
@@ -552,35 +553,102 @@ async function startGitActions($: EngineInterface, command: string): Promise<str
   // The crab acts out the last push or merge of the command while it runs.
   const acted = [...added].reverse().find(a => a.pose)
   if (acted?.pose) {
-    stageTimer?.cancel()
-    stageTimer = null
-    stageId = acted.id
-    await update($, stage, () => ({ pose: acted.pose!, state: 'running', target: acted.target }))
+    gitStage = { id: acted.id, token: await startStage($, { pose: acted.pose, target: acted.target }) }
   }
   return added.map(a => a.id)
 }
 
-/** The bar entry the crab acts out, and the timer that puts it down FLASH_MS after it is done. */
-let stageId: string | null = null
+/** The bar entry the crab acts out, and its stage's token. */
+let gitStage: { id: string; token: number } | null = null
+
+/**
+ * The crab's stage: what Claude is doing besides a file. A new one replaces the one on show
+ * (the newest wins); each has a token, so an older one ending does not touch a newer. Done,
+ * it stays FLASH_MS with the pill saying so, then goes. While a helper (the Agent tool)
+ * runs, the calls it makes do not take the card from it: a tool call does not say whose it is.
+ */
+let stageToken = 0
 let stageTimer: { cancel: () => void } | null = null
+let helpers = 0
+
+/** Shows a stage as running; its token, 0 when a helper holds the card. */
+async function startStage($: EngineInterface, s: Omit<Stage, 'state' | 'at'>): Promise<number> {
+  if (helpers > 0 && s.pose !== 'agent') return 0
+  stageTimer?.cancel()
+  stageTimer = null
+  const token = ++stageToken
+  const at = await $.clock.now()
+  await update($, stage, () => ({ ...s, state: 'running', at }))
+  return token
+}
+
+/**
+ * Ends a stage as its call came out. Tests that fail say so; anything else that fails or
+ * is refused becomes an error ("Push failed", "Command denied"). Either way it shows for
+ * FLASH_MS, unless a newer stage took the card meanwhile.
+ */
+async function endStage($: EngineInterface, token: number, outcome: StepStatus) {
+  if (!token || token !== stageToken) return
+  const s = await read($, stage)
+  if (!s) return
+  const ok = outcome === 'ok'
+  const failedWord = outcome === 'denied' ? `${STAGE_NOUN[s.pose]} denied` : undefined
+  const next: Stage = ok ? { ...s, state: 'ok' }
+    : s.pose === 'test' && outcome === 'failed' ? { ...s, state: 'failed' }
+    : { ...s, state: 'failed', ...(failedWord ? { word: failedWord } : {}) }
+  await update($, stage, () => next)
+  stageTimer = $.clock.after(FLASH_MS, () => {
+    if (token !== stageToken) return
+    stageTimer = null
+    void update($, stage, () => null).catch(() => undefined)
+  })
+}
+
+/** Shows an error at once, for a call that had no stage of its own (an Edit that failed). */
+async function flashError($: EngineInterface, word: string, target: string, dir = '') {
+  const token = await startStage($, { pose: 'error', target, dir, word })
+  await endStage($, token, 'failed')
+}
+
+/** A shell command's stage: tests, a search or a plain command, named by its first line. */
+function shellStage($: EngineInterface, command: string): Promise<number> {
+  const kind = commandKind(command)
+  return startStage($, { pose: kind, target: kind === 'test' ? '' : shortCommand(command), ...(kind === 'test' ? { dir: shortCommand(command) } : {}) })
+}
+
+/** The keys of the other tools' calls the crab reads. */
+type OtherCall = { tool: string; command?: unknown; pattern?: unknown; path?: unknown; description?: unknown }
+
+/** The stage of a call that is not an edit or Bash: PowerShell, a search, a helper; 0 for the rest. */
+async function otherStage($: EngineInterface, e: OtherCall): Promise<number> {
+  if (e.tool === 'PowerShell') return shellStage($, String(e.command ?? ''))
+  if (e.tool === 'Grep' || e.tool === 'Glob') {
+    const where = typeof e.path === 'string' && e.path ? relTo(root, normPath(e.path)) : ''
+    return startStage($, { pose: 'search', target: `"${String(e.pattern ?? '').slice(0, 30)}"`, ...(where ? { dir: where } : {}) })
+  }
+  if (e.tool === 'Agent') return startStage($, { pose: 'agent', target: String(e.description ?? '').slice(0, 40) })
+  return 0
+}
+
+/** The file a call names, for an error's line: its name, or '' when it names none. */
+function fileName(e: unknown): string {
+  const path = (e as { file_path?: unknown }).file_path
+  return typeof path === 'string' && path ? normPath(path).split('/').pop() ?? '' : ''
+}
+
+/** A stage's noun, for "… denied". */
+const STAGE_NOUN: Record<Stage['pose'], string> = {
+  push: 'Push', merge: 'Merge', search: 'Search', command: 'Command', test: 'Tests', agent: 'Helper', error: 'Call',
+}
 
 /** Marks the bar's running actions done, failed or denied, as the command came out. */
 async function finishGitActions($: EngineInterface, ids: readonly string[], outcome: StepStatus): Promise<void> {
   const state: GitActionEntry['state'] = outcome === 'denied' ? 'denied' : outcome === 'failed' ? 'failed' : 'ok'
   await update($, gitLog, list => list.map(a => (ids.includes(a.id) ? { ...a, state } : a)))
-  if (!stageId || !ids.includes(stageId)) return
-  // Done: the crab keeps the pose a moment as the pill says so. Failed or denied: it stops at once.
-  if (state === 'ok') {
-    await update($, stage, s => (s ? { ...s, state: 'ok' as const } : s))
-    stageTimer = $.clock.after(FLASH_MS, () => {
-      stageId = null
-      stageTimer = null
-      void update($, stage, () => null).catch(() => undefined)
-    })
-  } else {
-    stageId = null
-    await update($, stage, () => null)
-  }
+  if (!gitStage || !ids.includes(gitStage.id)) return
+  const { token } = gitStage
+  gitStage = null
+  await endStage($, token, outcome)
 }
 
 /**
@@ -617,8 +685,10 @@ export const register: Register = on => {
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
     // A reload forgets the running turn's steps, so a Now row left in state would never be saved.
     await update($, live, () => null)
-    // Nor would a push or merge left acting in state ever be put down: its timer is gone.
+    // Nor would a stage left acting in state ever be put down: its timer is gone. A turn
+    // left running is over too.
     await update($, stage, () => null)
+    await update($, working, () => false)
     await listDir($, root)
     scheduleGit($)
     void openPane($)
@@ -629,7 +699,10 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) pending = { id: e.turnId, at: await $.clock.now(), prompt: firstLine(e.text), steps: [] }
+    if (e.agentId === undefined) {
+      pending = { id: e.turnId, at: await $.clock.now(), prompt: firstLine(e.text), steps: [] }
+      await update($, working, () => true)
+    }
     return next(e)
   }).catch(async ($, e, next) => {
     $.ui.log(`filetrail: turn.start failed: ${String(next.error)}`)
@@ -648,7 +721,10 @@ export const register: Register = on => {
       const ids = await startGitActions($, command).catch(err => { $.ui.log(`filetrail: the git bar did not update: ${String(err)}`); return [] as string[] })
       // What the command is about to delete, with each file's text, read while it is still there.
       const doomed = await doomedBy($, command).catch(err => { $.ui.log(`filetrail: a deletion was not read: ${String(err)}`); return [] as Doomed[] })
+      // The crab: a push or a merge acts itself out, a commit lights its files; anything else is a stage.
+      const token = gitStage && ids.includes(gitStage.id) || isCommit(command) ? 0 : await shellStage($, command)
       const r = await next(e)
+      await endStage($, token, outcomeOf(r)).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
       if (doomed.length) {
         try {
           const goneNow: Doomed[] = []
@@ -673,7 +749,16 @@ export const register: Register = on => {
       }
       return r
     }
-    if (!EDIT_TOOLS.has(e.tool)) return next(e)
+    if (!EDIT_TOOLS.has(e.tool)) {
+      const token = await otherStage($, e as unknown as OtherCall).catch(() => 0)
+      if (e.tool === 'Agent') helpers++
+      let r
+      try { r = await next(e) } finally { if (e.tool === 'Agent') helpers-- }
+      const outcome = outcomeOf(r)
+      if (token) await endStage($, token, outcome).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
+      else if (outcome !== 'ok') await flashError($, `${e.tool} ${outcome}`, '', fileName(e)).catch(() => undefined)
+      return r
+    }
     let steps: Turn['steps'] = []
     try {
       const call = e as unknown as EditCall
@@ -690,6 +775,7 @@ export const register: Register = on => {
     const r = await next(e)
     const status = outcomeOf(r)
     for (const s of steps) s.status = status
+    if (status !== 'ok') await flashError($, `${e.tool} ${status}`, '', fileName(e)).catch(() => undefined)
     if (steps.length) await showLive($).catch(err => $.ui.log(`filetrail: the live turn did not update: ${String(err)}`))
     if (status === 'ok' && steps[0]) {
       // A Write may add a file: list its folder again if it is on show.
@@ -711,6 +797,7 @@ export const register: Register = on => {
     if (e.agentId !== undefined) return r
     const turn = pending
     pending = null
+    await update($, working, () => false)
     // Deletions the refresh below finds were Claude's, and go in this turn.
     turnEndedAt = await $.clock.now()
     lastTurn = turn
@@ -903,7 +990,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),
