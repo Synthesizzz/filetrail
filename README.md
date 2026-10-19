@@ -113,7 +113,7 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 - **Select a file** to hand it to Claude: `Claude sees: notes.md` appears, and every prompt you send carries a line naming it, so "this file" means it. Beside it are History, Open (in your default app), Copy path and Copy full path. `✕` clears it.
 - Typing `@path/to/file` in a prompt also opens the tree to that file.
 - **Double-click** a file to view it in the pane: Markdown is rendered, code is highlighted with line numbers, 400 lines a page. `← files` goes back. Binary files and files over 2 MB are not shown.
-- **Toolbar:** `↻` refresh, `◉`/`○` show or hide dotfiles, `⊟` collapse all, `⌖` back to the selected file. Hover an icon to see what it does.
+- **Toolbar:** `↻` refresh, `◉`/`○` show or hide dotfiles, `⊟` collapse all, `⌖` back to the selected file. Hover an icon to see what it does. A click answers at once: the icon flashes orange (refresh spins) and what was done shows in green for a moment (`✓ Refreshed`, `✓ Dotfiles hidden`).
 
 ### The History tab
 

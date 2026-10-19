@@ -395,12 +395,12 @@ export function filesView(
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
   const tools: (Tool & { run: () => void })[] = [
-    { id: 'refresh', glyph: '↻', hint: 'Refresh folders and git', run: () => actions.refresh() },
+    { id: 'refresh', glyph: '↻', hint: 'Refresh folders and git', done: 'Refreshed', run: () => actions.refresh() },
     files.hideDots
-      ? { id: 'dots', glyph: '○', hint: 'Show dotfiles', run: () => actions.toggleDots() }
-      : { id: 'dots', glyph: '◉', hint: 'Hide dotfiles', run: () => actions.toggleDots() },
-    { id: 'collapse', glyph: '⊟', hint: 'Close all folders', run: () => actions.collapseAll() },
-    ...(files.selected !== null ? [{ id: 'go-selected', glyph: '⌖', hint: 'Go to the selected file', run: () => actions.goToSelected() }] : []),
+      ? { id: 'dots', glyph: '○', hint: 'Show dotfiles', done: 'Dotfiles shown', run: () => actions.toggleDots() }
+      : { id: 'dots', glyph: '◉', hint: 'Hide dotfiles', done: 'Dotfiles hidden', run: () => actions.toggleDots() },
+    { id: 'collapse', glyph: '⊟', hint: 'Close all folders', done: 'Folders closed', run: () => actions.collapseAll() },
+    ...(files.selected !== null ? [{ id: 'go-selected', glyph: '⌖', hint: 'Go to the selected file', done: 'Back to the file', run: () => actions.goToSelected() }] : []),
   ]
   for (const t of tools) toolPresses.set(t.id, t.run)
 
@@ -419,7 +419,7 @@ export function filesView(
             {/* filetree's header buttons, its plain Unicode glyphs. A Client draws them where it can, so
                 hovering one says what it does (a desktop Button has no tooltip); Buttons elsewhere. */}
             {Client
-              ? <Client key="tree-tools" module="./tools.tsx" flexGrow={1} props={{ tools: tools.map(({ id, glyph, hint }) => ({ id, glyph, hint })) } satisfies ToolsProps} />
+              ? <Client key="tree-tools" module="./tools.tsx" flexGrow={1} props={{ tools: tools.map(({ id, glyph, hint, done }) => ({ id, glyph, hint, ...(done ? { done } : {}) })) } satisfies ToolsProps} />
               : (
                 <Box key="tree-tools" flexDirection="row" gap={1} flexGrow={1} justifyContent="flex-end">
                   {tools.map(t => <Button key={t.id} label={t.glyph} plain dimColor onPress={t.run} />)}
