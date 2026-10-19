@@ -178,35 +178,25 @@ async function reveal($: EngineInterface, path: string, select: boolean, follow 
 }
 
 /**
- * The pane's fixed head and the tree under it. On the desktop the pane's window is the
- * desktop's: the wheel moves it before ui.scroll says so, and a mod can put it only at its
- * start or end (seen in traces). So the tree is drawn to fit under the head, nothing is
- * left to scroll, and it moves by Claude's glide and the ▲ ▼ buttons. The head's height
- * is measured, not known (the card's rows and the crab's pixels vary): when the pane
- * overflows after all and the person's wheel moves it, ui.scroll says how many rows it
- * drew, less the tree's lines; the pane then goes back to its start.
+ * The pane's head and the tree under it. On the desktop the pane's window is the desktop's:
+ * the wheel moves it before ui.scroll says so, and a mod can put it only at its start or end
+ * (seen in traces). The tree is drawn to fit under the head and moves by Claude's glide and
+ * the ▲ ▼ buttons. The head's height is measured, not known (the card's rows and the crab's
+ * pixels vary), so the pane may overflow: then it scrolls like a page, card and all, and is
+ * left where the person puts it. (It used to be sent back to its start on every redraw,
+ * which undid the person's scroll each time Claude touched a file.) When the person's wheel
+ * moves an overflowing pane, ui.scroll says how many rows it drew, less the tree's lines,
+ * so the next draw fits the tree better.
  */
 /** Large on purpose: a head guessed too big leaves blank rows, too small hides the ▼ below the edge. */
 const HEAD_GUESS = 22
-const pane = { headRows: HEAD_GUESS, fit: 0, treeLines: 0, windowAt: 0, drawnAt: 0 }
+const pane = { headRows: HEAD_GUESS, fit: 0, treeLines: 0, drawnAt: 0 }
 /** The tabs, the card and the search box take this many rows at least: a smaller head is a misread. */
 const MIN_HEAD_ROWS = 6
 /** How long after a redraw the pane's row count is trusted to be the new layout's. */
 const SETTLE_MS = 300
 /** The head as last measured, kept for the next session: the guess is only for the first. */
 const HEAD_KEY = 'filetrail:head'
-
-/** Puts the pane's window back at its start, where the card is, once the desktop moved it. */
-let snapping: { cancel: () => void } | null = null
-function snapTop($: EngineInterface) {
-  snapping?.cancel()
-  snapping = $.clock.after(SNAP_MS, () => {
-    snapping = null
-    void $.ui.scroll({ to: 'start', in: PANE }).catch(() => undefined)
-  })
-}
-/** The wheel's ticks come in a burst: the pane goes back once they pause. */
-const SNAP_MS = 60
 
 /**
  * The person scrolling the tree holds the follow for BROWSE_MS (as a folder they open is
@@ -916,10 +906,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The tree's head stays put: in the Files tab's tree the pane has nothing to scroll. If it
-  // overflowed after all (the card grew), the person's wheel measures the head and the
-  // pane goes back to its start. Elsewhere (History, a preview, search results) the pane
-  // scrolls as usual.
+  // The Files tab's tree is drawn to fit under the head. If the pane overflowed after all
+  // (the card grew), the person's wheel measures the head for the next draw; the pane stays
+  // where they scrolled it. Elsewhere (History, a preview, search results) nothing is measured.
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
     const f = await read($, files)
     if ((await read($, tab)) !== 'files' || (f.query ?? '').trim() || (await read($, preview))) return next(e)
@@ -932,7 +921,6 @@ export const register: Register = on => {
       await update($, headRows, () => head)
       await $.store.set(HEAD_KEY, head)
     }
-    if (e.origin.kind === 'person' && e.offset > 0) snapTop($)
     return next(e)
   })
 
@@ -941,9 +929,8 @@ export const register: Register = on => {
     // Box): left out there, the crab falls back to its blocks and the branch to its glyph.
     const els = $.ui.resolve(e)
     if (e.surface === 'terminal') NO_SVG.add(els)
-    // Where the pane's window stands, the tree's room under the head, and the lines it
-    // will draw: what the ui.scroll hook measures the head against.
-    pane.windowAt = e.props.scroll.offset
+    // The tree's room under the head, and the lines it will draw: what the ui.scroll hook
+    // measures the head against.
     pane.headRows = (await read($, headRows)) ?? HEAD_GUESS
     pane.drawnAt = await $.clock.now()
     pane.fit = treeRows(e.props.scroll.bodyRows, pane.headRows)
@@ -952,10 +939,6 @@ export const register: Register = on => {
       const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
       // The Following paused line takes one of the tree's rows, and counts.
       pane.treeLines = (count ? treeLines(treeWindow(count, f.top ?? 0, pane.fit - (f.away ? 1 : 0))) : 1) + (f.away ? 1 : 0)
-      if ((await read($, tab)) === 'files' && !(f.query ?? '').trim() && !(await read($, preview))) {
-        // The desktop moved the pane on its own (seen in a trace, with no ui.scroll): back to its start.
-        if (pane.windowAt > 0) snapTop($)
-      }
     }
     clearRows()
     const { Box, Text, Button } = els
