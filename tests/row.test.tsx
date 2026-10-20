@@ -91,3 +91,11 @@ test('fitRow drops a folder marked opt before cutting the name, keeping the pill
   expect(fitRow(row, 40).map(s => s.t)).toEqual([' MD ', ' notes.md', ' trail-demo/deep', ' Reading '])
   expect(fitRow(row, 24).map(s => s.t)).toEqual([' MD ', ' notes.md', ' Reading '])
 })
+
+test('fitRow cuts a name marked ext in its middle, so the extension stays whole', () => {
+  const row: Seg[] = [{ t: ' TS ' }, { t: ' files-view-helpers.tsx', name: true, ext: true }, { t: ' Edited ', right: true }]
+  expect(fitRow(row, 26).map(s => s.t)).toEqual([' TS ', ' files-vi….tsx', ' Edited '])
+  // No extension to keep (a dotfile, a bare name): cut at the end as before.
+  const bare: Seg[] = [{ t: ' ' }, { t: ' .gitignore-local', name: true, ext: true }, { t: ' Edited ', right: true }]
+  expect(fitRow(bare, 18).map(s => s.t)).toEqual([' ', ' .gitign…', ' Edited '])
+})

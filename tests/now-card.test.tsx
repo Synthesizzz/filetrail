@@ -61,9 +61,10 @@ test('the card shrinks with the pane: the line wraps, and narrow the pill goes u
   }
 })
 
-test('badgeOf: the extension upper-cased, three letters at most', () => {
+test('badgeOf: the whole extension upper-cased', () => {
   expect(badgeOf('C:/w/client.test.js')).toBe('JS')
-  expect(badgeOf('C:/w/README.markdown')).toBe('MAR')
+  expect(badgeOf('C:/w/README.markdown')).toBe('MARKDOWN')
+  expect(badgeOf('C:/w/Practice_Solution.ipynb')).toBe('IPYNB')
   expect(badgeOf('C:/w/Makefile')).toBe('TXT')
 })
 

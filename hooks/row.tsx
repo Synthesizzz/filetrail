@@ -15,8 +15,9 @@ import type { ClientModule } from 'claude-code'
  * `right` runs sit at the row's right edge (counts, a git letter), after a spacer.
  * `name` marks the run cut first when the row is too long (the second run if none is);
  * `opt` runs (a file's time) give way before anything else. `bg` fills the run (a pill, a badge).
+ * `ext` keeps a cut name's extension whole, cutting before it instead of at the end.
  */
-export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean; bg?: string }
+export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean; bg?: string; ext?: boolean }
 /**
  * `wrap` lets the runs flow onto further lines (a turn's title) instead of fitting
  * one line (a tree row). `hoverAt` is the run underlined under the pointer: the
@@ -73,10 +74,23 @@ export function shimmer(i: number, phase: number, len: number, palette: readonly
 const MIN_NAME = 8
 const width = (s: Seg) => [...s.t].length
 
-/** A name cut to `room` columns, its end replaced by an ellipsis. */
+/** A file name's extension (".tsx"), or '' for a dotfile or a bare name. */
+const extOf = (t: string) => {
+  const m = /\.[^.\s/]{1,8}$/.exec(t)
+  return m && t.slice(0, m.index).trim() ? m[0] : ''
+}
+
+/**
+ * A name cut to `room` columns with an ellipsis: at its end, or, for an `ext` run,
+ * before its extension, so "files-vi….tsx" still says what kind of file it is.
+ */
 function clipName(s: Seg, room: number): Seg {
   const chars = [...s.t]
   if (chars.length <= room) return s
+  const ext = s.ext ? [...extOf(s.t)] : []
+  if (ext.length && room - ext.length - 1 >= 2) {
+    return { ...s, t: chars.slice(0, room - ext.length - 1).join('') + '…' + ext.join('') }
+  }
   return { ...s, t: chars.slice(0, Math.max(1, room - 1)).join('') + '…' }
 }
 

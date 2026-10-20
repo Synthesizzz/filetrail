@@ -306,11 +306,11 @@ export function typeColor(path: string): string | undefined {
   return dot > 0 ? TYPE_COLOR[name.slice(dot + 1).toLowerCase()] : undefined
 }
 
-/** A file's kind as a short badge: its extension, upper-cased, three letters at most. */
+/** A file's kind as a badge: its whole extension, upper-cased ("IPYNB", not "IPY"). */
 export function badgeOf(path: string): string {
   const name = path.split('/').pop() ?? path
   const dot = name.lastIndexOf('.')
-  return dot > 0 ? name.slice(dot + 1, dot + 4).toUpperCase() : 'TXT'
+  return dot > 0 ? name.slice(dot + 1).toUpperCase() : 'TXT'
 }
 
 /**
@@ -353,7 +353,7 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
         const segs: Seg[] = [
           // The badge takes the file type's colour, as the tree's marker does; grey for a type not listed.
           { t: ` ${badgeOf(f.path)} `, c: badgeColor, bg: `${badgeColor}22`, b: true },
-          { t: `${NNBSP}${name}`, name: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
+          { t: `${NNBSP}${name}`, name: true, ext: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
           // The folder gives way before the name when the row is short (seen live: "notes.…" beside a whole folder).
           ...(dir ? [{ t: `${NNBSP}${dir}`, dim: true, opt: true }] : []),
           now

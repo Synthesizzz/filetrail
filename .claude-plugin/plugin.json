@@ -1,6 +1,6 @@
 {
   "name": "filetrail",
-  "version": "0.13.5",
+  "version": "0.13.6",
   "description": "A file tree and a history of Claude's edits in one pane, with Files and History tabs",
   "types": "./types/index.d.ts",
   "author": {
