@@ -9,6 +9,10 @@ filetrail adds a pane to Claude Code with two tabs:
 
 It is built for the Claude Code desktop app and also works in the terminal.
 
+<p align="center">
+  <img src="docs/pane.png" alt="The filetrail pane: the card with the branch, git counts, the crab and the files Claude touched, above the colour-coded file tree" width="360">
+</p>
+
 ## Highlights
 
 - **Follows Claude around.** When Claude reads or edits a file, its row lights up and the tree opens to it.
