@@ -9,7 +9,7 @@ import type { EngineInterface, RenderElement } from 'claude-code'
 
 import type { Entry, Stage, StagePose, Tone } from '../types'
 import { relTo } from './history'
-import { splitPath } from './paths'
+import { badgeColors, splitPath } from './paths'
 import { AGENT, COMMAND, crabSvg, CRAB_ROWS, GONE, MERGE, PUSH, SEARCH, TEST } from './crab'
 import type { Pose } from './crab'
 import { lower } from './tree'
@@ -79,6 +79,8 @@ export function nowCard(
     : working ? { pill: 'Thinking', doing: 'thinking', color: IDLE.color, fill: IDLE.fill, name: '', dir: '' } : null
   const pose: Pose = look ? look.pose : active ?? (working ? 'think' : 'idle')
   const icon = style ?? IDLE
+  // Without an Svg (the terminal) a translucent fill is painted opaque: the pill is solid there.
+  const pillInk = badgeColors(!Svg, icon.color, icon.fill)
   const crab = crabSvg(pose, style ? `Crab ${style.doing}${style.name ? ` ${style.name}` : ''}` : 'Crab asleep: Claude is idle')
   return (
     // minWidth 0 lets the card shrink with the pane; what still does not fit is clipped
@@ -88,21 +90,26 @@ export function nowCard(
     {header}
     {/* One line, kept short so the tree below keeps the room (seen live: three lines and a
         large crab took much of the pane): the crab, what Claude does, the file, its folder. */}
-    <Box key="now-row" flexDirection="row" gap={1} alignItems="flex-start" minWidth={0}>
+    <Box key="now-row" flexDirection="row" gap={1} alignItems="flex-start" minWidth={0} {...(Svg ? {} : { marginTop: 1 })}>
       {/* The crab, in a pose for what Claude is doing; blocks where the surface has no Svg. */}
       {Svg
         ? <Svg source={crab.source} alt={crab.alt} width={crab.width} height={crab.height} />
-        : <Text color={icon.color}>{CRAB_ROWS[0]}</Text>}
+        // Four rows of the desktop crab's own grid: a low brow, eyes as gaps between the pincers, the legs.
+        : (
+          <Box key="crab-rows" flexDirection="column" flexShrink={0}>
+            {CRAB_ROWS.map((row, i) => <Text key={`crab-${i}`} color={icon.color}>{row}</Text>)}
+          </Box>
+        )}
       {/* The line wraps rather than run out of the card; narrow, the pill goes under it, as
           wide as its word (seen live: a column stretched it across the card). */}
       <Box key="now-text" flexDirection="column" alignItems="flex-start" flexGrow={1} flexShrink={1} minWidth={0} gap="xs">
         {style
           ? <Text weight="semibold" wrap="wrap">{style.name ? `${style.pill} ` : style.pill}{style.name ? <Text color={style.color}>{style.name}</Text> : null}{style.dir ? <Text dimColor>{` · ${style.dir}`}</Text> : null}</Text>
           : <Text weight="semibold" wrap="wrap">Idle<Text dimColor>{where ? ` · last ${NOW_STYLE[last!.tone].did} ${where.name}` : ' · nothing touched yet'}</Text></Text>}
-        {style && narrow ? <Text key="now-pill" color={style.color} backgroundColor={style.fill} weight="semibold">{` ${style.pill} `}</Text> : null}
+        {style && narrow ? <Text key="now-pill" color={pillInk.c} backgroundColor={pillInk.bg} weight="semibold">{` ${style.pill} `}</Text> : null}
       </Box>
       {/* The status pill: a Text with a background. */}
-      {style && !narrow ? <Text key="now-pill" color={style.color} backgroundColor={style.fill} weight="semibold">{` ${style.pill} `}</Text> : null}
+      {style && !narrow ? <Text key="now-pill" color={pillInk.c} backgroundColor={pillInk.bg} weight="semibold">{` ${style.pill} `}</Text> : null}
     </Box>
     {/* Below the row: the files Claude touched this session. */}
     {sections}

@@ -64,6 +64,19 @@ export function formatAt(at: number, now: number): string {
   return sameDay ? hm : `${MONTHS[d.getMonth()]} ${d.getDate()} ${hm}`
 }
 
+/**
+ * A badge's colours. The desktop lays a translucent fill (`#rrggbbaa`) over the pane; the
+ * terminal drops the alpha and paints the colour opaque, so text in the badge's own colour
+ * came out blank (seen live: a file's extension). Solid, the colour is the fill and the
+ * ink is dark or white, whichever reads on it.
+ */
+export function badgeColors(solid: boolean, color: string, fill: string): { c: string; bg: string } {
+  if (!solid) return { c: color, bg: fill }
+  const n = parseInt(color.slice(1, 7), 16)
+  const luma = Number.isNaN(n) ? 0 : 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)
+  return { c: luma > 150 ? '#1f1e1d' : '#ffffff', bg: color }
+}
+
 /** A file's time as filetree shows it: `2026-10-02 09:24`, local time. */
 export function stampOf(at: number): string {
   const d = new Date(at)

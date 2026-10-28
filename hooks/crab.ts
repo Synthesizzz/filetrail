@@ -40,7 +40,7 @@ const ABOVE = 3
 export const CRAB_SCALE = 2
 export const CRAB_PX = { width: WIDE * CRAB_SCALE, height: (TALL + ABOVE) * CRAB_SCALE }
 /** The same creature in a terminal's blocks, for surfaces without an Svg. */
-export const CRAB_ROWS = [' ▐▛███▜▌ ', '▝▜█████▛▘', '  ▘▘ ▝▝  '] as const
+export const CRAB_ROWS = ['  ▄▄▄▄  ', '▜▄█▐▌█▄▛', '▀▀████▀▀', '  ▌▌▐▐  '] as const
 
 /** A pose: a file's tone, a stage, tests that `passed` or `failed`, Claude thinking, or idle. */
 export type Pose = Tone | StagePose | 'passed' | 'failed' | 'think' | 'idle'

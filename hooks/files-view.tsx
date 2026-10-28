@@ -7,7 +7,7 @@ import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
-import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
+import { badgeColors, NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import type { Tool, ToolsProps } from './tools'
@@ -171,7 +171,7 @@ function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry
   const chip = (key: string, runs: Run[], icon?: { name: GitIcon; color: string; alt: string }) => {
     const drawn = icon && Svg ? octicon(icon.name, icon.color, icon.alt) : null
     return (
-      <Box key={key} flexDirection="row" alignItems="center" backgroundColor={CHIP_BG} flexShrink={1} minWidth={0}>
+      <Box key={key} flexDirection="row" alignItems="center" {...(Svg ? { backgroundColor: CHIP_BG } : {})} flexShrink={1} minWidth={0}>
         {drawn && Svg ? <Text>{NBSP}</Text> : null}
         {drawn && Svg ? <Svg source={drawn.source} alt={drawn.alt} width={drawn.width} height={drawn.height} /> : null}
         <Box key={`${key}-words`} flexShrink={1} minWidth={0}>
@@ -329,6 +329,8 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
   const { Box, Text, Button } = els
   const more = touched.length - rows
   const Client = 'Client' in els ? els.Client : undefined
+  // No Svg is the terminal: it paints a translucent fill opaque, so its badges are solid.
+  const solid = svgOf(els) === undefined
   if (!touched.length) return []
   // The handle along the card's bottom border: held and dragged, it previews the size; let go, the list takes it.
   const handle = Client
@@ -352,12 +354,12 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
         const badgeColor = typeColor(f.path) ?? GIT_HEX.muted
         const segs: Seg[] = [
           // The badge takes the file type's colour, as the tree's marker does; grey for a type not listed.
-          { t: ` ${badgeOf(f.path)} `, c: badgeColor, bg: `${badgeColor}22`, b: true },
+          { t: ` ${badgeOf(f.path)} `, ...badgeColors(solid, badgeColor, `${badgeColor}22`), b: true },
           { t: `${NNBSP}${name}`, name: true, ext: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
           // The folder gives way before the name when the row is short (seen live: "notes.…" beside a whole folder).
           ...(dir ? [{ t: `${NNBSP}${dir}`, dim: true, opt: true }] : []),
           now
-            ? { t: ` ${gone && f.by === 'you' && now === 'delete' ? 'Deleted by you' : style.pill} `, c: style.color, bg: style.fill, b: true, right: true }
+            ? { t: ` ${gone && f.by === 'you' && now === 'delete' ? 'Deleted by you' : style.pill} `, ...badgeColors(solid, style.color, style.fill), b: true, right: true }
             : { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true },
         ]
         if (Client) {
@@ -403,6 +405,8 @@ export function filesView(
   // Only surfaces that take typing have an Input (terminal, desktop); elsewhere the search box is left out.
   const Input = 'Input' in els ? els.Input : undefined
   const Client = 'Client' in els ? els.Client : undefined
+  // No Svg is the terminal: it paints a translucent fill opaque, so the selected row gets a marker, not the fill.
+  const terminal = svgOf(els) === undefined
   const name = root.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? root
   const counts = editCounts(turns)
   // Now: the folders down to this turn's files, opened, and those files, with everything in the
@@ -517,7 +521,7 @@ export function filesView(
         const dotfile = entry.name.startsWith('.')
         const segs: Seg[] = [
           // The selected row is filled where a Client draws it; a marker stands in elsewhere.
-          { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected && !Client ? '›' : NBSP) + NNBSP, mono: true },
+          { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected && (!Client || terminal) ? '›' : NBSP) + NNBSP, mono: true },
           isDir ? { t: '■' + NNBSP, c: folderColor(folderAt.get(lower(entry.path)) ?? 0), dim: dotfile }
             : { t: '•' + NNBSP, ...(!dotfile && typeColor(entry.path) ? { c: typeColor(entry.path)! } : { dim: true }) },
           {
@@ -554,7 +558,7 @@ export function filesView(
           rowCopies.set(key, (full, surface) => actions.copy(entry.path, full, surface))
           // As wide as the pane, so the row knows its room and fits itself (it never wraps).
           // Monospace, as filetree's terminal rows are: the dates and badges line up in a column.
-          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, ...(isSelected ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />
+          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, ...(isSelected && !terminal ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />
         }
         // Surfaces without a Client: a plain Button, which may not paint the colours.
         return (
