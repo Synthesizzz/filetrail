@@ -45,6 +45,46 @@ export const CRAB_ROWS = ['  ▄▄▄▄  ', '▜▄█▐▌█▄▛', '▀�
 /** A pose: a file's tone, a stage, tests that `passed` or `failed`, Claude thinking, or idle. */
 export type Pose = Tone | StagePose | 'passed' | 'failed' | 'think' | 'idle'
 
+/** The terminal's crab for a pose: the base rows with a row or two swapped for the prop or the eyes. */
+const posed = (over: Partial<Record<0 | 1 | 2 | 3, string>>): readonly string[] => CRAB_ROWS.map((row, i) => over[i as 0 | 1 | 2 | 3] ?? row)
+const SHUT = '▜▄████▄▛'
+// Eyes at the lower corners of their cells, still two apart, so they read as looking down and never join into one.
+const DOWN = '▜▄█▜▛█▄▛'
+const DIZZY = ['▜▄█╲╱█▄▛', '▜▄█╱╲█▄▛'] as const
+
+/**
+ * Each pose in blocks for a surface with no Svg: its frames, and how long each shows (ms).
+ * One frame stays still. Every row is 8 cells wide, so the card never shifts as they change.
+ */
+export const TERM_FRAMES: Record<Pose, { frames: readonly (readonly string[])[]; ms: number }> = {
+  // Eyes down at a page, the page turning.
+  read: { frames: [posed({ 0: '  ▄▄▄▄ ≡', 1: DOWN }), posed({ 0: '  ▄▄▄▄ =', 1: DOWN })], ms: 500 },
+  // A pencil scribbling beside the head.
+  write: { frames: [posed({ 0: '  ▄▄▄▄ ✎' }), posed({ 0: '  ▄▄▄▄✎ ' })], ms: 350 },
+  commit: { frames: [posed({ 0: '  ▄▄▄▄ ✓', 1: '▛▄█▐▌█▄▜' })], ms: 0 },
+  delete: { frames: [posed({ 0: ' ✕▄▄▄▄  ', 1: DOWN })], ms: 0 },
+  // An arrow rising off the head.
+  push: { frames: [posed({ 0: '  ▄▄▄▄ ↑' }), posed({ 0: '  ▄▄▄▄  ' })], ms: 500 },
+  // Two branches closing over the head.
+  merge: { frames: [posed({ 0: '╲ ▄▄▄▄ ╱' }), posed({ 0: ' ╲▄▄▄▄╱ ' })], ms: 500 },
+  // A glass sweeping side to side.
+  search: { frames: [posed({ 0: '○ ▄▄▄▄  ' }), posed({ 0: '  ▄▄▄▄ ○' })], ms: 350 },
+  // A prompt and its blinking cursor.
+  command: { frames: [posed({ 0: '  ▄▄▄▄>_', 1: DOWN }), posed({ 0: '  ▄▄▄▄> ', 1: DOWN })], ms: 500 },
+  // A spinner while tests run.
+  test: { frames: ['◐', '◓', '◑', '◒'].map(s => posed({ 0: `  ▄▄▄▄ ${s}` })), ms: 250 },
+  passed: { frames: [posed({ 0: '  ▄▄▄▄ ✓', 1: '▛▄█▐▌█▄▜' })], ms: 0 },
+  failed: { frames: [posed({ 0: '  ▄▄▄▄ ✕', 1: DIZZY[0] })], ms: 0 },
+  // Dizzy, eyes swapping.
+  error: { frames: DIZZY.map(eyes => posed({ 0: '  ▄▄▄▄ !', 1: eyes })), ms: 350 },
+  // A thought bubble growing.
+  think: { frames: [posed({ 0: '  ▄▄▄▄ ·' }), posed({ 0: '  ▄▄▄▄·○' })], ms: 600 },
+  // A little helper hopping beside it.
+  agent: { frames: [posed({ 0: '  ▄▄▄▄▗▖' }), posed({ 0: '  ▄▄▄▄▖▗' })], ms: 400 },
+  // Asleep: eyes shut, a z rising.
+  idle: { frames: [posed({ 1: SHUT }), posed({ 0: '  ▄▄▄▄ z', 1: SHUT })], ms: 1200 },
+}
+
 const block = (x: number, y: number, wide: number, tall: number, fill = CRAB, name = '') =>
   `<rect${name ? ` class="${name}"` : ''} x="${x}" y="${y}" width="${wide}" height="${tall}" fill="${fill}"/>`
 

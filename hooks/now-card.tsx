@@ -10,8 +10,9 @@ import type { EngineInterface, RenderElement } from 'claude-code'
 import type { Entry, Stage, StagePose, Tone } from '../types'
 import { relTo } from './history'
 import { badgeColors, splitPath } from './paths'
-import { AGENT, COMMAND, crabSvg, CRAB_ROWS, GONE, MERGE, PUSH, SEARCH, TEST } from './crab'
+import { AGENT, COMMAND, crabSvg, GONE, MERGE, PUSH, SEARCH, TERM_FRAMES, TEST } from './crab'
 import type { Pose } from './crab'
+import type { CrabProps } from './crab-client'
 import { lower } from './tree'
 import { svgOf } from './octicons'
 
@@ -67,6 +68,7 @@ export function nowCard(
 ) {
   const { Box, Text } = els
   const Svg = svgOf(els)
+  const Client = 'Client' in els ? els.Client : undefined
   const active = last ? flash[last.path] : undefined
   const where = last ? splitPath(relTo(root, spelled(listing, last.path))) : null
   // The newest of a stage (a search, a command, a push…) and the file Claude is on is
@@ -94,12 +96,15 @@ export function nowCard(
       {/* The crab, in a pose for what Claude is doing; blocks where the surface has no Svg. */}
       {Svg
         ? <Svg source={crab.source} alt={crab.alt} width={crab.width} height={crab.height} />
-        // Four rows of the desktop crab's own grid: a low brow, eyes as gaps between the pincers, the legs.
-        : (
-          <Box key="crab-rows" flexDirection="column" flexShrink={0}>
-            {CRAB_ROWS.map((row, i) => <Text key={`crab-${i}`} color={icon.color}>{row}</Text>)}
-          </Box>
-        )}
+        // Four rows of the desktop crab's own grid, a frame or two per pose. A surface with a Client moves it;
+        // without one the pose's first frame is drawn still.
+        : Client
+          ? <Client key={`crab-${pose}`} module="./crab-client.tsx" props={{ pose, color: icon.color } satisfies CrabProps} />
+          : (
+            <Box key="crab-rows" flexDirection="column" flexShrink={0}>
+              {TERM_FRAMES[pose].frames[0]!.map((row, i) => <Text key={`crab-${i}`} color={icon.color}>{row}</Text>)}
+            </Box>
+          )}
       {/* The line wraps rather than run out of the card; narrow, the pill goes under it, as
           wide as its word (seen live: a column stretched it across the card). */}
       <Box key="now-text" flexDirection="column" alignItems="flex-start" flexGrow={1} flexShrink={1} minWidth={0} gap="xs">

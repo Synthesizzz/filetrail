@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { FLASH_MS } from '../hooks/activity'
-import { crabSvg, CRAB_PX, GONE, MERGE, PUSH } from '../hooks/crab'
+import { crabSvg, CRAB_PX, CRAB_ROWS, GONE, MERGE, PUSH, TERM_FRAMES } from '../hooks/crab'
 import { badgeOf, BRANCH_GLYPH, CHIP_BG, GIT_HEX, ICON_MUTED, typeColor } from '../hooks/files-view'
 
 const BOOK_COLOR = '#8b5cf6'
@@ -254,7 +254,7 @@ test('a touched file\'s badge takes its type\'s colour, as the tree\'s marker do
   await ui.unmount()
 })
 
-test('the terminal paints no translucent fill: badges and the pill are solid with ink that contrasts, the crab is three rows', async ($, on) => {
+test('the terminal paints no translucent fill: badges and the pill are solid with ink that contrasts, the crab is its own Client', async ($, on) => {
   const dirs: Record<string, [string, 'file' | 'dir'][]> = { 'C:\work\demo': [['app.ts', 'file']], 'C:/work/demo': [['app.ts', 'file']] }
   const { clock } = world(on, { dirs, files: { 'C:\work\demo\app.ts': 'a\n' } })
   await $.session.start(START)
@@ -271,7 +271,41 @@ test('the terminal paints no translucent fill: badges and the pill are solid wit
   const pill = (await ui.findAll({ type: 'Text' })).find((t: any) => t.text === '\u00a0Editing\u00a0')
   expect(pill?.props).toMatchObject({ backgroundColor: NOW_STYLE.write.color })
   expect(pill?.props.color).not.toBe(NOW_STYLE.write.color)
-  expect(await ui.find({ key: 'crab-rows' })).toBeDefined()
+  expect(await ui.find({ key: 'crab-write' })).toMatchObject({ type: 'Client' })
+  expect(await rowRuns(ui, 'crab-write')).toHaveLength(4)
   expect(await ui.find({ key: 'now-row' })).toMatchObject({ props: { marginTop: 1 } })
+  await ui.unmount()
+})
+
+test('the terminal crab has a frame set for every pose, each 4 rows of 8 cells, stepping only when there is more than one', () => {
+  expect(CRAB_ROWS).toHaveLength(4)
+  for (const [pose, { frames, ms }] of Object.entries(TERM_FRAMES)) {
+    expect(frames.length, pose).toBeGreaterThan(0)
+    for (const rows of frames) {
+      expect(rows, pose).toHaveLength(4)
+      for (const row of rows) expect([...row], `${pose}: ${row}`).toHaveLength(8)
+    }
+    expect(ms > 0, pose).toBe(frames.length > 1)
+  }
+})
+
+test('the terminal crab steps through its frames on its own clock, a new pose starting again, a still pose never ticking', { timeoutMs: 15_000 }, async ($, on) => {
+  const dirs: Record<string, [string, 'file' | 'dir'][]> = { 'C:\\work\\demo': [['app.ts', 'file']], 'C:/work/demo': [['app.ts', 'file']] }
+  const { clock } = world(on, { dirs, files: { 'C:\\work\\demo\\app.ts': 'a\n' } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'terminal', ...PANE })
+  const rows = async (key: string) => (await rowRuns(ui, key)).filter(r => r.props.color).map(r => r.text)
+  // Idle: asleep, the z coming and going.
+  const first = await rows('crab-idle')
+  expect(first).toEqual([...TERM_FRAMES.idle.frames[0]!])
+  await ui.advance(TERM_FRAMES.idle.ms + 100)
+  expect(await rows('crab-idle')).toEqual([...TERM_FRAMES.idle.frames[1]!])
+  // A read starts its own crab on its first frame.
+  await $.tool.call({ tool: 'Read', file_path: 'C:/work/demo/app.ts' } as never)
+  await clock.advance(200)
+  expect(await rows('crab-read')).toEqual([...TERM_FRAMES.read.frames[0]!])
+  await ui.advance(TERM_FRAMES.read.ms + 100)
+  expect(await rows('crab-read')).toEqual([...TERM_FRAMES.read.frames[1]!])
   await ui.unmount()
 })
