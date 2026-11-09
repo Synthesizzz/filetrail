@@ -11,6 +11,8 @@ import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from 
 import { blockedOf, callText } from './blocked'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
 import type { Snapshot } from './shell-change'
+import { dimensionsOf, imageKind, imageSvg, MAX_DRAW_BYTES } from './image'
+import type { ImageKind } from './image'
 import { checksum, judgeStale, remember, staleLabel } from './stale'
 import type { ReadRecord } from './stale'
 import { addRun, testScope } from './test-runs'
@@ -811,7 +813,9 @@ async function finishGitActions($: EngineInterface, ids: readonly string[], outc
  * The text is read again for each page rather than kept, so state holds one page.
  */
 async function loadPreview($: EngineInterface, path: string, page: number): Promise<void> {
-  await update($, preview, cur => (cur && lower(cur.path) === lower(path) && cur.source !== undefined ? { ...cur, page } : { path, page }))
+  await update($, preview, cur => (cur && lower(cur.path) === lower(path) && (cur.source !== undefined || cur.image) ? { ...cur, page } : { path, page }))
+  const kind = imageKind(path)
+  if (kind) return loadImage($, path, kind)
   let text: string
   try {
     text = String(await $.fs.read(path))
@@ -825,6 +829,29 @@ async function loadPreview($: EngineInterface, path: string, page: number): Prom
   if (why) { await update($, preview, () => ({ path, page, reason: why })); return }
   const shown = pageText(text, page)
   await update($, preview, () => ({ path, page: Math.floor((shown.first - 1) / PAGE_LINES), source: shown.source, total: shown.total }))
+}
+
+/**
+ * Shows a PNG, JPEG or SVG file: its size from its own header, and the one drawing that shows
+ * it when it is small enough. Always its words too, so a surface that draws no picture says what it is.
+ */
+async function loadImage($: EngineInterface, path: string, kind: ImageKind): Promise<void> {
+  let base64: string
+  try {
+    base64 = (await $.fs.read(path, { as: 'bytes' })).base64
+  } catch (err) {
+    // The read stops at 4 MiB; anything else is a file gone or unreadable.
+    const reason: Preview['reason'] = /MiB|large|size/i.test(String(err)) ? 'large' : 'missing'
+    await update($, preview, () => ({ path, page: 0, reason }))
+    return
+  }
+  const bytes = Math.floor((base64.length * 3) / 4) - (base64.match(/=+$/)?.[0].length ?? 0)
+  const size = dimensionsOf(kind, base64)
+  const draw = bytes <= MAX_DRAW_BYTES ? imageSvg(kind, base64, size) : null
+  await update($, preview, () => ({
+    path, page: 0,
+    image: { kind, ...size, bytes, ...(draw ? { svg: draw.svg, drawWidth: draw.width, drawHeight: draw.height } : {}) },
+  }))
 }
 
 /** The preview reads its file again after Claude changed it, on the same page. */

@@ -111,7 +111,22 @@ export type DeletedBy = 'claude' | 'you'
  * A file shown in the pane in place of the tree, a page at a time: the page's text and
  * the file's line count once read, or why it is not shown.
  */
-export type Preview = { path: string; page: number; source?: string; total?: number; reason?: 'binary' | 'large' | 'missing' }
+export type Preview = { path: string; page: number; source?: string; total?: number; reason?: 'binary' | 'large' | 'missing'; image?: PreviewImage }
+
+/**
+ * A PNG, JPEG or SVG file shown in the pane: its size in pixels (null when its header holds none),
+ * its size in bytes, and, when small enough to draw, the one SVG drawing that shows it and the
+ * pixels to draw it at.
+ */
+export type PreviewImage = {
+  kind: 'png' | 'jpeg' | 'svg'
+  width: number | null
+  height: number | null
+  bytes: number
+  svg?: string
+  drawWidth?: number
+  drawHeight?: number
+}
 
 /**
  * A file Claude read, edited or committed this session, for the Claude touched list: its path as spelled, how, and when.

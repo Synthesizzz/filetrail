@@ -28,11 +28,13 @@ export type WorldOptions = {
   onBash?: (command: string) => void
   /** Reads of a path ending in one of these fail, as a file over the read limit does. */
   unreadable?: string[]
+  /** Picture files by path, as the base64 `fs.read(path, { as: 'bytes' })` answers. */
+  images?: Record<string, string>
 }
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [] }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {} }: WorldOptions = {}) {
   mock.env(on, env)
   // The engine makes a written path absolute for this machine before the hook sees it
   // ('/home/x' arrives as 'C:\home\x' on Windows): kept here with forward slashes.
@@ -65,9 +67,10 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   on('ui.open', (_$: any, e: any) => { opens.push(e); return { value: { isPlaced: true } } })
   const closes: unknown[] = []
   on('ui.close', (_$: any, e: any) => { closes.push(e); return { value: undefined } })
-  on('fs.exists', (_$: any, e: any) => ({ value: e.path in files }))
+  on('fs.exists', (_$: any, e: any) => ({ value: e.path in files || e.path in images }))
   on('fs.read', (_$: any, e: any) => {
     if (unreadable.some(end => String(e.path).endsWith(end))) throw new Error('file is larger than 4 MiB')
+    if (e.as === 'bytes') return { value: { base64: images[e.path] } }
     return { value: files[e.path] }
   })
   on('tool.call', (_$: any, e: any) => {

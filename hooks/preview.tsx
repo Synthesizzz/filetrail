@@ -7,6 +7,8 @@ import type { EngineInterface } from 'claude-code'
 
 import type { Preview } from '../types'
 import { splitPath } from './paths'
+import { altOf, describeImage, formatBytes, MAX_DRAW_BYTES } from './image'
+import { svgOf } from './octicons'
 import { relTo } from './history'
 
 type Els = ReturnType<EngineInterface['ui']['resolve']>
@@ -57,6 +59,32 @@ const REASONS: Record<NonNullable<Preview['reason']>, string> = {
   missing: 'This file could not be read (moved or deleted?).',
 }
 
+/** A picture: drawn where the surface draws vectors, with a line of words under it either way; words alone on the terminal and for one too big to draw. */
+function imageBody(els: Els, name: string, image: NonNullable<Preview['image']>) {
+  const { Box, Text } = els
+  const Svg = svgOf(els)
+  const size = { width: image.width, height: image.height }
+  const words = describeImage(image.kind, size, image.bytes)
+  if (Svg && image.svg) {
+    return (
+      <Box key="preview-picture" flexDirection="column" gap="xs">
+        <Svg key="preview-image" source={image.svg} alt={altOf(name, image.kind, size)} width={image.drawWidth ?? 320} height={image.drawHeight ?? 240} />
+        <Text dimColor>{words}</Text>
+      </Box>
+    )
+  }
+  return (
+    <Box key="preview-picture" flexDirection="column" gap="xs">
+      <Text>{`▣ ${words}`}</Text>
+      <Text dimColor>
+        {Svg
+          ? `Too big to draw here (over ${formatBytes(MAX_DRAW_BYTES)}): ↗ opens it in your image viewer.`
+          : 'The terminal does not draw pictures here: ↗ opens it in your image viewer.'}
+      </Text>
+    </Box>
+  )
+}
+
 export function previewView(els: Els, root: string, preview: Preview, actions: PreviewActions, lit: string | undefined) {
   const { Box, Text, Button, Code, Markdown } = els
   const { name, dir } = splitPath(relTo(root, preview.path))
@@ -72,7 +100,7 @@ export function previewView(els: Els, root: string, preview: Preview, actions: P
         <Box flexGrow={1} />
         <Button key="preview-open" label="↗" plain dimColor onPress={() => actions.open(preview.path)} />
       </Box>
-      {pages > 1 && (
+      {pages > 1 && !preview.image && (
         <Box key="preview-pages" flexDirection="row" gap={1}>
           <Button key="preview-prev" label="◀" plain dimColor onPress={() => actions.page(preview.page - 1)} />
           <Text dimColor>{`lines ${first}–${lastLine} of ${preview.total}`}</Text>
@@ -81,6 +109,8 @@ export function previewView(els: Els, root: string, preview: Preview, actions: P
       )}
       {preview.reason
         ? <Text dimColor>{REASONS[preview.reason]}</Text>
+        : preview.image
+          ? imageBody(els, name, preview.image)
         : preview.source === undefined
           ? <Text dimColor>Reading the file…</Text>
           : preview.source === ''
