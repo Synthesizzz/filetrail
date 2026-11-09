@@ -1,7 +1,11 @@
 // Tool calls that were refused or failed, for History: what the call was, why it did not go
-// through, and who stopped it. A guess from what the engine reports: a `deny` answer is a
-// hook or plugin refusing; an error is read for words that say a hook or Claude Code's own
-// permission system refused it, and is a plain failure otherwise. No engine calls here.
+// through, and who stopped it. Read from what the engine reports. Observed on a real engine,
+// every stop of a built-in tool arrives as `{ isError: true, text }`, never as `deny`: a
+// refusal by a hook is "PreToolUse:Bash hook error: [command]: message", one by Claude
+// Code's permission system is "Permission to use Bash with command ... has been denied." or
+// "Claude requested permissions to write to ..., but you haven't granted it yet.", and a plain
+// failure is the tool's own text ("File does not exist.", "Exit code 3"). A `deny` answer (a
+// plugin's own hook refusing) is a hook. No engine calls here.
 
 import type { Blocked, BlockedKind } from '../types'
 
@@ -26,10 +30,10 @@ export function callText(call: { tool: string; [k: string]: unknown }): string {
   return ''
 }
 
-/** Words of a hook's refusal as Claude Code reports it ("PreToolUse:Bash hook error"). */
-const HOOK_WORDS = /\bhooks?\b/i
-/** Words of Claude Code's own refusals: a person saying no, the permission rules, auto mode's check. */
-const HARNESS_WORDS = /doesn'?t want to proceed|tool use was rejected|\buser (refused|rejected|denied|declined)|permissions? (rule|setting|mode|prompt|to use)|auto mode|classifier|requires approval|was blocked/i
+/** Words of a hook's refusal as Claude Code reports it ("PreToolUse:Bash hook error"); a path that merely says "hooks" is not one. */
+const HOOK_WORDS = /\bhook (?:blocking )?error\b/i
+/** Words of Claude Code's own refusals: a person saying no, the permission rules, a permission not yet granted, auto mode's check. */
+const HARNESS_WORDS = /doesn'?t want to proceed|tool use was rejected|\buser (refused|rejected|denied|declined)|permissions? (rule|setting|mode|prompt|to use)|requested permissions? to|haven'?t granted|auto mode|classifier|requires approval|was blocked/i
 
 /**
  * Whether a call's result says it was stopped, and why: null for one that was answered.

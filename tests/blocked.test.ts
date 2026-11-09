@@ -38,6 +38,24 @@ test('blockedOf: an error whose text says a hook blocked it, or the permission s
   expect(blockedOf({ isError: true, result: 'EACCES: permission denied, open a.txt' })).toMatchObject({ kind: 'failed' })
 })
 
+// Texts as a real engine reported them for each way a call stops: every one is `{ ref, result, text, isError }`.
+test('blockedOf: the texts a real engine gave for a rule refusal, a hook, a permission not granted and plain failures', () => {
+  const stopped = (text: string) => blockedOf({ ref: 1, result: `Error: ${text}`, text, isError: true })
+  expect(stopped('Permission to use Bash with command echo nope has been denied.'))
+    .toEqual({ kind: 'harness', reason: 'Permission to use Bash with command echo nope has been denied.' })
+  expect(stopped("Claude requested permissions to write to C:\\work\\demo\\x.txt, but you haven't granted it yet."))
+    .toMatchObject({ kind: 'harness' })
+  expect(stopped('PreToolUse:Bash hook error: [node check.js]: Blocked by the check: this command is not allowed here'))
+    .toMatchObject({ kind: 'hook', reason: 'PreToolUse:Bash hook error: [node check.js]: Blocked by the check: this command is not allowed here' })
+  expect(stopped('File does not exist. Note: your current working directory is C:\\work\\demo.')).toMatchObject({ kind: 'failed' })
+  expect(stopped('Exit code 3')).toEqual({ kind: 'failed', reason: 'Exit code 3' })
+  expect(stopped("Exit code 2\nls: cannot access 'nothere-dir': No such file or directory")).toMatchObject({ kind: 'failed', reason: 'Exit code 2' })
+  // A failure that only names a hooks folder is not a hook's refusal.
+  expect(stopped("Exit code 2\nls: cannot access 'hooks/nothere': No such file or directory")).toMatchObject({ kind: 'failed' })
+  // An answered call carries no isError.
+  expect(blockedOf({ ref: 1, result: { stdout: 'fine', stderr: '', interrupted: false }, text: 'fine', isReadOnly: true })).toBe(null)
+})
+
 test('blockedOf: the reason is the first line, spaces tidied, cut at 200 characters', () => {
   expect(blockedOf({ deny: 'first   line\nsecond line' })?.reason).toBe('first line')
   expect(blockedOf({ isError: true, result: 'y'.repeat(500) })?.reason.length).toBe(200)
