@@ -75,6 +75,10 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     if (String(e.file_path).endsWith('broken.ts')) return { result: 'old_string not found', isError: true }
     // A Bash command with "--fail" in it ends with an error, as a non-zero exit does.
     if (e.tool === 'Bash' && String(e.command).includes('--fail')) return { result: 'exit 1', isError: true }
+    // A hook refusing a command answers with a deny; Claude Code's own refusal and a tool failing come as errors.
+    if (e.tool === 'Bash' && String(e.command).includes('--hook-says-no')) return { deny: 'Not now: the build is frozen.' }
+    if (e.tool === 'Bash' && String(e.command).includes('--permission-says-no')) return { result: 'x', isError: true, text: "The user doesn't want to proceed with this tool use. The tool use was rejected." }
+    if (e.tool === 'Read' && String(e.file_path).endsWith('missing.md')) return { result: 'File does not exist.', isError: true }
     if (e.tool === 'Bash') onBash?.(String(e.command))
     return { result: 'ok' }
   })

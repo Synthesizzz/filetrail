@@ -8,6 +8,7 @@ import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
 import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
+import { blockedOf, callText } from './blocked'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
 import type { Snapshot } from './shell-change'
 import { contextLine, mentionedPaths, resolveMention } from './context'
@@ -340,6 +341,21 @@ async function recordShellChanges($: EngineInterface, watched: readonly Watch[],
   for (const f of found) await touch($, { path: f.w.path, tone: 'write', follow: false, flag: f.flag })
 }
 
+/**
+ * Keeps a call that was refused or failed in the running turn, with who stopped it and why.
+ * Every tool's call counts, an edit's too (its step also says it was not applied).
+ */
+async function recordBlocked($: EngineInterface, call: unknown, result: unknown) {
+  const found = blockedOf(result)
+  if (!found) return
+  const at = await $.clock.now()
+  pending ??= { id: `t${at}`, at, prompt: '', steps: [] }
+  const tool = String((call as { tool?: unknown }).tool ?? '')
+  const entry = { id: `${pending.id}.b${callCount++}`, tool, call: callText(call as { tool: string }), reason: found.reason, kind: found.kind, at }
+  pending.blocked = [...(pending.blocked ?? []), entry]
+  await showLive($)
+}
+
 /** Takes the paths not yet recorded as deleted and marks them so, before any await: two finders never record one twice. */
 function claim<T extends { path: string }>(items: readonly T[]): T[] {
   const mine = items.filter(i => !gone.has(lower(i.path)))
@@ -517,8 +533,8 @@ async function loadHistory($: EngineInterface) {
 /** Shows the running turn as it stands: a copy, since its steps change as the tools answer. */
 async function showLive($: EngineInterface) {
   const now = pending
-  if (!now || !now.steps.length) return
-  await update($, live, () => ({ ...now, steps: now.steps.map(s => ({ ...s })) }))
+  if (!now || (!now.steps.length && !now.blocked?.length)) return
+  await update($, live, () => ({ ...now, steps: now.steps.map(s => ({ ...s })), ...(now.blocked ? { blocked: now.blocked.map(b => ({ ...b })) } : {}) }))
 }
 
 /** Adds a finished turn to the project's history and keeps every project inside the store's budget. */
@@ -791,6 +807,7 @@ export const register: Register = on => {
       // The files the command names, as they are before it runs, to see what it did to them.
       const watched = await watchBefore($, command).catch(() => [] as Watch[])
       const r = await next(e)
+      await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
       await endStage($, token, outcomeOf(r)).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
       if (doomed.length) {
         try {
@@ -826,6 +843,7 @@ export const register: Register = on => {
       let r
       try { r = await next(e) } finally { if (e.tool === 'Agent') helpers-- }
       const outcome = outcomeOf(r)
+      await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
       if (watched.length && outcome !== 'denied') {
         await recordShellChanges($, watched, new Set()).catch(err => $.ui.log(`filetrail: a changed file was not recorded: ${String(err)}`))
       }
@@ -849,6 +867,7 @@ export const register: Register = on => {
     const r = await next(e)
     const status = outcomeOf(r)
     for (const s of steps) s.status = status
+    await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
     if (status !== 'ok') await flashError($, `${e.tool} ${status}`, '', fileName(e)).catch(() => undefined)
     if (steps.length) await showLive($).catch(err => $.ui.log(`filetrail: the live turn did not update: ${String(err)}`))
     if (status === 'ok' && steps[0]) {
@@ -875,10 +894,10 @@ export const register: Register = on => {
     // Deletions the refresh below finds were Claude's, and go in this turn.
     turnEndedAt = await $.clock.now()
     lastTurn = turn
-    if (turn && turn.steps.length) {
+    if (turn && (turn.steps.length || turn.blocked?.length)) {
       try { await saveTurn($, turn) } catch (err) { $.ui.log(`filetrail: history was not saved: ${String(err)}`) }
       // The band offers this turn until it is replayed or another turn changes files.
-      await update($, hint, () => hintFor(turn))
+      if (turn.steps.length) await update($, hint, () => hintFor(turn))
     }
     // Saved now (or it changed nothing): the timeline's Now row gives way to the saved turn.
     await update($, live, () => null)
@@ -925,7 +944,7 @@ export const register: Register = on => {
     }
     if (args === 'export') return { text: await exportHistory($) }
     if (args === 'replay') {
-      const latest = (await read($, history)).at(-1)
+      const latest = (await read($, history)).filter(t => t.steps.length || !t.blocked?.length).at(-1)
       if (!latest) return { text: 'filetrail: no edits recorded in this project yet.' }
       await openReplay($, latest.id)
       return { text: `filetrail: replaying ${latest.steps.length} edit${latest.steps.length === 1 ? '' : 's'} from ${stamp(latest.at)}.` }

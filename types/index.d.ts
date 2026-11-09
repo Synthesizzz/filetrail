@@ -27,13 +27,30 @@ export type Step = {
   at: number
 }
 
-/** One main-loop turn that changed files. */
+/** Who stopped a tool call: a hook, Claude Code itself (its permission rules, a person saying no), or the tool failing. */
+export type BlockedKind = 'hook' | 'harness' | 'failed'
+
+/** A tool call that was refused or failed: the tool, what it acted on, and why, when the engine said. */
+export type Blocked = {
+  id: string
+  tool: string
+  /** The command, file, pattern or address the call named, one line cut to 160 characters; '' when it named none. */
+  call: string
+  /** The engine's reason, its first line cut to 200 characters; '' when it gave none. */
+  reason: string
+  kind: BlockedKind
+  at: number
+}
+
+/** One main-loop turn that changed files, or had a call refused or failed. */
 export type Turn = {
   id: string
   at: number
   /** First line of the prompt that started the turn, "" when none was typed. */
   prompt: string
   steps: Step[]
+  /** Calls of the turn that were refused or failed, in order; absent when none was. */
+  blocked?: Blocked[]
 }
 
 /**
