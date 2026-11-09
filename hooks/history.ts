@@ -107,6 +107,14 @@ export function deleteStep(path: string, root: string, text: string | null, by: 
   return { ...step({ id, path: normPath(path), rel: relTo(root, normPath(path)), tool: 'Delete', note, line: null, at }, text ?? '', ''), status: 'ok' }
 }
 
+/**
+ * A file a shell command shrank or overwrote, as a step: the diff from the text before to the
+ * text after, so the removed lines are a copy of the old text, capped as any step's diff is.
+ */
+export function changeStep(path: string, root: string, before: string, after: string, note: string, at: number, id: string): Step {
+  return { ...step({ id, path: normPath(path), rel: relTo(root, normPath(path)), tool: 'Bash', note, line: null, at }, before, after), status: 'ok' }
+}
+
 /** What `next(e)` of a tool call resolved to, as a step status. */
 export function outcomeOf(result: unknown): StepStatus {
   if (!result || typeof result !== 'object') return 'ok'

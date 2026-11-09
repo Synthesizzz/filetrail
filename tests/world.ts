@@ -26,11 +26,13 @@ export type WorldOptions = {
   env?: Record<string, string>
   /** Runs as a Bash command does, before it answers: a test deletes files here. */
   onBash?: (command: string) => void
+  /** Reads of a path ending in one of these fail, as a file over the read limit does. */
+  unreadable?: string[]
 }
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [] }: WorldOptions = {}) {
   mock.env(on, env)
   // The engine makes a written path absolute for this machine before the hook sees it
   // ('/home/x' arrives as 'C:\home\x' on Windows): kept here with forward slashes.
@@ -64,7 +66,10 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   const closes: unknown[] = []
   on('ui.close', (_$: any, e: any) => { closes.push(e); return { value: undefined } })
   on('fs.exists', (_$: any, e: any) => ({ value: e.path in files }))
-  on('fs.read', (_$: any, e: any) => ({ value: files[e.path] }))
+  on('fs.read', (_$: any, e: any) => {
+    if (unreadable.some(end => String(e.path).endsWith(end))) throw new Error('file is larger than 4 MiB')
+    return { value: files[e.path] }
+  })
   on('tool.call', (_$: any, e: any) => {
     if (String(e.file_path).endsWith('denied.ts')) return { deny: 'The user refused this edit.' }
     if (String(e.file_path).endsWith('broken.ts')) return { result: 'old_string not found', isError: true }

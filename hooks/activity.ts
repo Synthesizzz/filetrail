@@ -26,7 +26,7 @@ export const HOLD_MS = 5 * 60_000
 export const BROWSE_MS = 30_000
 
 /** `by`: who deleted it, for a `delete`. */
-export type Target = { path: string; tone: Tone; follow: boolean; by?: DeletedBy }
+export type Target = { path: string; tone: Tone; follow: boolean; by?: DeletedBy; flag?: string }
 
 const READS = new Set(['Read'])
 const SEARCHES = new Set(['Grep', 'Glob'])

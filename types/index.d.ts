@@ -6,8 +6,9 @@ export type DiffLine = { op: ' ' | '+' | '-' | '~'; t: string }
 export type StepStatus = 'pending' | 'ok' | 'denied' | 'failed'
 
 /**
- * One file change: one Edit or Write, or one edit of a MultiEdit, by Claude; or a file
- * deleted (tool `Delete`), by Claude or the person, its text kept as removed lines.
+ * One file change: one Edit or Write, or one edit of a MultiEdit, by Claude; a file
+ * deleted (tool `Delete`), by Claude or the person, its text kept as removed lines; or a file
+ * a shell command shrank or overwrote (tool `Bash`), the diff from its old text to its new.
  */
 export type Step = {
   id: string
@@ -95,8 +96,11 @@ export type DeletedBy = 'claude' | 'you'
  */
 export type Preview = { path: string; page: number; source?: string; total?: number; reason?: 'binary' | 'large' | 'missing' }
 
-/** A file Claude read, edited or committed this session, for the Claude touched list: its path as spelled, how, and when. */
-export type TouchedFile = { path: string; tone: Tone; at: number; by?: DeletedBy }
+/**
+ * A file Claude read, edited or committed this session, for the Claude touched list: its path as spelled, how, and when.
+ * `flag`: a shell command shrank or overwrote it (the card's word for it, "Shrank −67%").
+ */
+export type TouchedFile = { path: string; tone: Tone; at: number; by?: DeletedBy; flag?: string }
 
 /** What a git action does, which picks its colour in the bar. */
 export type GitActionKind = 'save' | 'sync' | 'fetch' | 'branch' | 'merge' | 'stash'

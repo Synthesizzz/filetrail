@@ -8,6 +8,8 @@ import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
 import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
+import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
+import type { Snapshot } from './shell-change'
 import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
@@ -19,7 +21,7 @@ import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import { NO_SVG } from './octicons'
 import { pageOf, pageText, PAGE_LINES, refusal } from './preview'
 import {
-  addTurn, byteSize, BUDGET_BYTES, deleteStep, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
+  addTurn, byteSize, BUDGET_BYTES, changeStep, deleteStep, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
   isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
 } from './history'
 import type { EditCall, StoreIndex } from './history'
@@ -202,8 +204,8 @@ async function touch($: EngineInterface, target: Target) {
   await update($, flash, f => ({ ...f, [k]: target.tone }))
   await update($, last, () => ({ path: k, tone: target.tone, at }))
   // A file read, written, committed or deleted joins the Claude touched list (a searched folder does not).
-  if (target.follow || target.tone === 'commit' || target.tone === 'delete') {
-    const entry: TouchedFile = { path: normPath(target.path), tone: target.tone, at, ...(target.by ? { by: target.by } : {}) }
+  if (target.follow || target.tone === 'commit' || target.tone === 'delete' || target.flag) {
+    const entry: TouchedFile = { path: normPath(target.path), tone: target.tone, at, ...(target.by ? { by: target.by } : {}), ...(target.flag ? { flag: target.flag } : {}) }
     await update($, touched, list => [entry, ...list.filter(f => lower(f.path) !== k)].slice(0, MAX_TOUCHED))
     // The Now tree: this turn's files, the newest last.
     await update($, turnFiles, list => [...list.filter(p => lower(p) !== k), normPath(target.path)].slice(-MAX_TURN_FILES))
@@ -290,6 +292,52 @@ async function doomedBy($: EngineInterface, command: string): Promise<Doomed[]> 
     }
   }
   return out
+}
+
+type Watch = { path: string; truncates: boolean; before: Snapshot }
+
+/**
+ * The files a shell command names, as they stand before it runs: their size and headings
+ * and their text, for the comparison after. A file that is not there, is binary, is too long
+ * or cannot be read is left out: the command still runs, unwatched.
+ */
+async function watchBefore($: EngineInterface, command: string): Promise<Watch[]> {
+  const out: Watch[] = []
+  for (const w of namedFiles(command, root)) {
+    try {
+      if (!(await $.fs.exists(w.path))) continue
+      const text = String(await $.fs.read(w.path))
+      if (text.length > MAX_WATCH_CHARS || refusal(text)) continue
+      out.push({ ...w, before: snapshot(text) })
+    } catch { /* not watched */ }
+  }
+  return out
+}
+
+/**
+ * After a shell command: the watched files it shrank or overwrote become steps in the
+ * running turn (the old text kept as removed lines, capped) and rows in the touched list
+ * with their flag. A file the command deleted is the deletion record's, not this one's.
+ */
+async function recordShellChanges($: EngineInterface, watched: readonly Watch[], skip: ReadonlySet<string>) {
+  const found: { w: Watch; text: string; flag: string; note: string }[] = []
+  for (const w of watched) {
+    if (skip.has(lower(w.path))) continue
+    let text: string
+    try {
+      if (!(await $.fs.exists(w.path))) continue
+      text = String(await $.fs.read(w.path))
+    } catch { continue }
+    const flagged = judge(w.before, snapshot(text), w.truncates)
+    if (flagged) found.push({ w, text, ...flagged })
+  }
+  if (!found.length) return
+  const at = await $.clock.now()
+  pending ??= { id: `t${at}`, at, prompt: '', steps: [] }
+  const base = pending.id
+  pending.steps.push(...found.map(f => changeStep(f.w.path, root, f.w.before.text, f.text, f.note, at, `${base}.${callCount++}`)))
+  await showLive($)
+  for (const f of found) await touch($, { path: f.w.path, tone: 'write', follow: false, flag: f.flag })
 }
 
 /** Takes the paths not yet recorded as deleted and marks them so, before any await: two finders never record one twice. */
@@ -740,6 +788,8 @@ export const register: Register = on => {
       const doomed = await doomedBy($, command).catch(err => { $.ui.log(`filetrail: a deletion was not read: ${String(err)}`); return [] as Doomed[] })
       // The crab: a push or a merge acts itself out, a commit lights its files; anything else is a stage.
       const token = gitStage && ids.includes(gitStage.id) || isCommit(command) ? 0 : await shellStage($, command)
+      // The files the command names, as they are before it runs, to see what it did to them.
+      const watched = await watchBefore($, command).catch(() => [] as Watch[])
       const r = await next(e)
       await endStage($, token, outcomeOf(r)).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
       if (doomed.length) {
@@ -753,6 +803,9 @@ export const register: Register = on => {
         } catch (err) {
           $.ui.log(`filetrail: a deletion was not recorded: ${String(err)}`)
         }
+      }
+      if (watched.length && outcomeOf(r) !== 'denied') {
+        await recordShellChanges($, watched, new Set(doomed.map(d => lower(d.path)))).catch(err => $.ui.log(`filetrail: a changed file was not recorded: ${String(err)}`))
       }
       // A folder found not to be a repo is asked again once one is made in it.
       if (makesRepo(command)) { isRepo = null; scheduleGit($) }
@@ -769,9 +822,13 @@ export const register: Register = on => {
     if (!EDIT_TOOLS.has(e.tool)) {
       const token = await otherStage($, e as unknown as OtherCall).catch(() => 0)
       if (e.tool === 'Agent') helpers++
+      const watched = e.tool === 'PowerShell' ? await watchBefore($, String((e as unknown as OtherCall).command ?? '')).catch(() => [] as Watch[]) : []
       let r
       try { r = await next(e) } finally { if (e.tool === 'Agent') helpers-- }
       const outcome = outcomeOf(r)
+      if (watched.length && outcome !== 'denied') {
+        await recordShellChanges($, watched, new Set()).catch(err => $.ui.log(`filetrail: a changed file was not recorded: ${String(err)}`))
+      }
       if (token) await endStage($, token, outcome).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
       else if (outcome !== 'ok') await flashError($, `${e.tool} ${outcome}`, '', fileName(e)).catch(() => undefined)
       return r

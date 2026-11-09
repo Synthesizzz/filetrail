@@ -323,6 +323,8 @@ export function badgeOf(path: string): string {
 export const TOUCHED_SHOWN = 3
 /** The most touched files kept, and so the most the handle can show. */
 export const TOUCHED_MAX = 8
+/** A flagged file's word: warning yellow, as History's "not applied". */
+const FLAG_COLOR = '#f59e0b'
 
 /** `rows`: how many touched files show before "+N more", as the card's handle left it. */
 function touchedSection(els: Els, root: string, touched: readonly TouchedFile[], flash: Readonly<Record<string, Tone>>, open: boolean, actions: FilesActions, rows = TOUCHED_SHOWN) {
@@ -358,9 +360,12 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
           { t: `${NNBSP}${name}`, name: true, ext: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
           // The folder gives way before the name when the row is short (seen live: "notes.…" beside a whole folder).
           ...(dir ? [{ t: `${NNBSP}${dir}`, dim: true, opt: true }] : []),
-          now
-            ? { t: ` ${gone && f.by === 'you' && now === 'delete' ? 'Deleted by you' : style.pill} `, ...badgeColors(solid, style.color, style.fill), b: true, right: true }
-            : { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true },
+          // A shell command shrank or overwrote it: the flag's word in warning yellow, in place of the pill or "Edited".
+          f.flag
+            ? { t: ` ${f.flag} `, c: FLAG_COLOR, b: true, right: true }
+            : now
+              ? { t: ` ${gone && f.by === 'you' && now === 'delete' ? 'Deleted by you' : style.pill} `, ...badgeColors(solid, style.color, style.fill), b: true, right: true }
+              : { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true },
         ]
         if (Client) {
           rowPresses.set(key, () => (gone ? actions.history(f.path) : actions.reveal(f.path)))
