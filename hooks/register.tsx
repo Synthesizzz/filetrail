@@ -25,7 +25,7 @@ import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './press
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import { NO_SVG } from './octicons'
-import { pageOf, pageText, PAGE_LINES, refusal } from './preview'
+import { isMarkdown, pageOf, pageText, PAGE_LINES, refusal } from './preview'
 import {
   addTurn, byteSize, BUDGET_BYTES, changeStep, deleteStep, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
   isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
@@ -245,16 +245,19 @@ const MAX_BASH_TARGETS = 12
  * followed into view) and the folders or files a search or listing names (lit only).
  * Only paths inside the project that exist are touched.
  */
-async function lightReads($: EngineInterface, command: string) {
+async function lightReads($: EngineInterface, command: string): Promise<string[]> {
   let followed = false
+  const readers: string[] = []
   for (const t of readTargets(command, root).slice(0, MAX_BASH_TARGETS)) {
     if (!isInside(root, t.path) || !(await $.fs.exists(t.path))) continue
     await touch($, { path: t.path, tone: 'read', follow: t.follow && !followed })
     if (t.follow) {
       followed = true
-      await noteRead($, t.path).catch(err => $.ui.log(`filetrail: a read was not noted: ${String(err)}`))
+      readers.push(t.path)
     }
   }
+  // The files a reader named: noted once the command went through, not before.
+  return readers
 }
 
 /** Files of one delete recorded at most, with the text of each kept: a wide `rm -r` should not fill the history. */
@@ -319,7 +322,7 @@ async function watchBefore($: EngineInterface, command: string): Promise<Watch[]
       if (!(await $.fs.exists(w.path))) continue
       const text = String(await $.fs.read(w.path))
       if (text.length > MAX_WATCH_CHARS || refusal(text)) continue
-      out.push({ ...w, before: snapshot(text) })
+      out.push({ ...w, before: snapshot(text, isMarkdown(w.path)) })
     } catch { /* not watched */ }
   }
   return out
@@ -339,7 +342,7 @@ async function recordShellChanges($: EngineInterface, watched: readonly Watch[],
       if (!(await $.fs.exists(w.path))) continue
       text = String(await $.fs.read(w.path))
     } catch { continue }
-    const flagged = judge(w.before, snapshot(text), w.truncates)
+    const flagged = judge(w.before, snapshot(text, isMarkdown(w.path)), w.truncates)
     if (flagged) found.push({ w, text, ...flagged })
   }
   if (!found.length) return
@@ -370,11 +373,16 @@ async function recordBlocked($: EngineInterface, call: unknown, result: unknown)
 const reads = new Map<string, ReadRecord>()
 
 /** git's HEAD, or null outside a repo or when git does not answer. */
-async function headSha($: EngineInterface): Promise<string | null> {
+async function headSha($: EngineInterface, fresh = false): Promise<string | null> {
   if (isRepo === false) return null
+  if (!fresh && headCache !== undefined) return headCache
   const ran = await $.process.run(['git', 'rev-parse', 'HEAD'], { cwd: root, timeoutMs: 5000 }).catch(() => null)
-  return ran && ran.exitCode === 0 ? ran.stdout.trim() || null : null
+  headCache = ran && ran.exitCode === 0 ? ran.stdout.trim() || null : null
+  return headCache
 }
+
+/** HEAD as last asked (undefined: not yet this turn): the reads of one turn share one question to git. */
+let headCache: string | null | undefined
 
 /** A checksum of a file's text now; null when it is gone, binary, too long or unreadable. */
 async function sumOf($: EngineInterface, path: string): Promise<string | null> {
@@ -407,11 +415,11 @@ async function markEdited($: EngineInterface, path: string) {
   await update($, stale, m => ({ ...m, [k]: { by: [...new Set<StaleBy>(['edit', ...(m[k]?.by ?? [])])].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)), at } }))
 }
 
-/** Whether git holds a commit of `path` newer than the HEAD the file was read at. */
-async function committedSince($: EngineInterface, rec: ReadRecord, head: string | null): Promise<boolean> {
-  if (!rec.head || !head || rec.head === head) return false
-  const ran = await $.process.run(['git', 'log', '--format=%H', '-1', `${rec.head}..HEAD`, '--', relTo(root, rec.path)], { cwd: root, timeoutMs: 10_000 }).catch(() => null)
-  return !!ran && ran.exitCode === 0 && ran.stdout.trim() !== ''
+/** The files (lower-cased, relative to the project) that differ between a HEAD a file was read at and HEAD now; null when git cannot say. */
+async function changedSince($: EngineInterface, from: string): Promise<Set<string> | null> {
+  const ran = await $.process.run(['git', 'diff', '--name-only', '--relative', `${from}..HEAD`], { cwd: root, timeoutMs: 10_000 }).catch(() => null)
+  if (!ran || ran.exitCode !== 0) return null
+  return new Set(ran.stdout.split(/\r?\n/).filter(Boolean).map(lower))
 }
 
 /**
@@ -420,21 +428,31 @@ async function committedSince($: EngineInterface, rec: ReadRecord, head: string 
  */
 async function refreshStale($: EngineInterface) {
   if (!reads.size) return
-  const head = await headSha($)
+  const head = await headSha($, true)
+  // One question to git for each HEAD the files were read at, not one for each file.
+  const held = new Map<string, Set<string> | null>()
   const steps = [...(await read($, history)).flatMap(t => t.steps), ...(pending?.steps ?? [])]
   const at = await $.clock.now()
   const marks: Record<string, StaleMark> = {}
   for (const [k, rec] of reads) {
     const edited = steps.some(s => lower(s.path) === k && s.at >= rec.at && s.status !== 'denied' && s.status !== 'failed' && (EDIT_TOOLS.has(s.tool) || s.tool === 'Bash'))
-    const by = judgeStale(rec, { sum: await sumOf($, rec.path) }, edited, await committedSince($, rec, head))
+    let committed = false
+    if (rec.head && head && rec.head !== head) {
+      if (!held.has(rec.head)) held.set(rec.head, await changedSince($, rec.head))
+      committed = held.get(rec.head)?.has(lower(relTo(root, rec.path))) ?? false
+    }
+    const by = judgeStale(rec, { sum: await sumOf($, rec.path) }, edited, committed)
     if (by) marks[k] = { by, at }
   }
   await update($, stale, () => marks)
 }
 
 /** Keeps a finished test command as the session's last run (one a hook or Claude Code refused never ran). */
-async function recordTestRun($: EngineInterface, command: string, started: number, outcome: StepStatus) {
-  if (outcome === 'denied' || commandKind(command) !== 'test') return
+async function recordTestRun($: EngineInterface, command: string, started: number, result: unknown) {
+  const outcome = outcomeOf(result)
+  // A refusal (a deny, or an error saying a hook or Claude Code stopped it) is not a run.
+  const stopped = blockedOf(result)?.kind
+  if (outcome === 'denied' || stopped === 'hook' || stopped === 'harness' || commandKind(command) !== 'test') return
   const at = await $.clock.now()
   const run = { command: shortCommand(command), ok: outcome === 'ok', at, ms: at - started, scope: testScope(command) }
   await update($, tests, runs => addRun(runs, run))
@@ -889,6 +907,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       pending = { id: e.turnId, at: await $.clock.now(), prompt: firstLine(e.text), steps: [] }
+      headCache = undefined
       await update($, working, () => true)
       // A new turn: the Now tree starts empty (the last turn's stayed on show until now).
       await update($, turnFiles, () => [])
@@ -905,10 +924,9 @@ export const register: Register = on => {
     let target: Target | null = null
     try { target = targetOf(e as unknown as { tool: string }) } catch { /* nothing to light */ }
     if (target && target.tone === 'read') await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
-    if (target && target.tone === 'read' && target.follow) await noteRead($, target.path).catch(err => $.ui.log(`filetrail: a read was not noted: ${String(err)}`))
     if (e.tool === 'Bash') {
       const command = String((e as unknown as { command?: unknown }).command ?? '')
-      await lightReads($, command).catch(err => $.ui.log(`filetrail: Bash highlight failed: ${String(err)}`))
+      const readers = await lightReads($, command).catch(err => { $.ui.log(`filetrail: Bash highlight failed: ${String(err)}`); return [] as string[] })
       const ids = await startGitActions($, command).catch(err => { $.ui.log(`filetrail: the git bar did not update: ${String(err)}`); return [] as string[] })
       // What the command is about to delete, with each file's text, read while it is still there.
       const doomed = await doomedBy($, command).catch(err => { $.ui.log(`filetrail: a deletion was not read: ${String(err)}`); return [] as Doomed[] })
@@ -919,8 +937,10 @@ export const register: Register = on => {
       const started = await $.clock.now()
       const r = await next(e)
       await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
+      // Claude has seen these files only if the command went through.
+      if (outcomeOf(r) === 'ok') for (const p of readers) await noteRead($, p).catch(err => $.ui.log(`filetrail: a read was not noted: ${String(err)}`))
       await endStage($, token, outcomeOf(r)).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
-      await recordTestRun($, command, started, outcomeOf(r)).catch(err => $.ui.log(`filetrail: a test run was not recorded: ${String(err)}`))
+      await recordTestRun($, command, started, r).catch(err => $.ui.log(`filetrail: a test run was not recorded: ${String(err)}`))
       if (doomed.length) {
         try {
           const goneNow: Doomed[] = []
@@ -959,7 +979,8 @@ export const register: Register = on => {
       let r
       try { r = await next(e) } finally { if (e.tool === 'Agent') helpers-- }
       const outcome = outcomeOf(r)
-      if (e.tool === 'PowerShell') await recordTestRun($, String((e as unknown as OtherCall).command ?? ''), started, outcome).catch(err => $.ui.log(`filetrail: a test run was not recorded: ${String(err)}`))
+      if (outcome === 'ok' && target && target.tone === 'read' && target.follow) await noteRead($, target.path).catch(err => $.ui.log(`filetrail: a read was not noted: ${String(err)}`))
+      if (e.tool === 'PowerShell') await recordTestRun($, String((e as unknown as OtherCall).command ?? ''), started, r).catch(err => $.ui.log(`filetrail: a test run was not recorded: ${String(err)}`))
       await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
       if (watched.length && outcome !== 'denied') {
         await recordShellChanges($, watched, new Set()).catch(err => $.ui.log(`filetrail: a changed file was not recorded: ${String(err)}`))
@@ -1012,7 +1033,7 @@ export const register: Register = on => {
     // Deletions the refresh below finds were Claude's, and go in this turn.
     turnEndedAt = await $.clock.now()
     lastTurn = turn
-    if (turn && (turn.steps.length || turn.blocked?.length)) {
+    if (turn && (turn.steps.length || turn.blocked?.some(b => b.kind !== 'failed'))) {
       try { await saveTurn($, turn) } catch (err) { $.ui.log(`filetrail: history was not saved: ${String(err)}`) }
       // The band offers this turn until it is replayed or another turn changes files.
       if (turn.steps.length) await update($, hint, () => hintFor(turn))

@@ -28,13 +28,15 @@ export type WorldOptions = {
   onBash?: (command: string) => void
   /** Reads of a path ending in one of these fail, as a file over the read limit does. */
   unreadable?: string[]
+  /** Calls on a path ending in one of these are refused by a hook; a test can add to it as it goes. */
+  refuse?: string[]
   /** Picture files by path, as the base64 `fs.read(path, { as: 'bytes' })` answers. */
   images?: Record<string, string>
 }
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {} }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [] }: WorldOptions = {}) {
   mock.env(on, env)
   // The engine makes a written path absolute for this machine before the hook sees it
   // ('/home/x' arrives as 'C:\home\x' on Windows): kept here with forward slashes.
@@ -75,6 +77,7 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   })
   on('tool.call', (_$: any, e: any) => {
     if (String(e.file_path).endsWith('denied.ts')) return { deny: 'The user refused this edit.' }
+    if (e.file_path && refuse.some(end => String(e.file_path).endsWith(end))) return { deny: 'Not now: a hook refused this.' }
     if (String(e.file_path).endsWith('broken.ts')) return { result: 'old_string not found', isError: true }
     // A Bash command with "--fail" in it ends with an error, as a non-zero exit does.
     if (e.tool === 'Bash' && String(e.command).includes('--fail')) return { result: 'exit 1', isError: true }
@@ -104,10 +107,9 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     if (!git) return out('', 128)
     // `rev-parse HEAD` answers the commit a test sets; any other rev-parse is the repo's top.
     if (argv[1] === 'rev-parse') return out(argv[2] === 'HEAD' ? `${git.head ?? 'h0'}\n` : `${git.top}\n`)
-    // `git log <from>..HEAD -- <path>` answers what a test says it holds.
-    if (argv[1] === 'log') return out(git.log ?? '')
     if (argv[1] === 'status') return out(git.status)
-    if (argv[1] === 'diff') return out(git.numstat)
+    // `git diff --name-only <from>..HEAD` answers the files a test says a commit held; any other diff is the numstat.
+    if (argv[1] === 'diff') return out(argv.includes('--name-only') ? git.log ?? '' : git.numstat)
     if (argv[1] === 'ls-files') return out(git.lsFiles ?? '')
     if (argv[1] === 'show') return out(git.show ?? '')
     // check-ignore names the paths it was given that git ignores: exit 1 when none is.

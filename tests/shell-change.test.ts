@@ -40,6 +40,12 @@ test('snapshot counts characters and headings', () => {
   expect(snapshot('no headings #here\n')).toMatchObject({ headings: 0 })
 })
 
+test('snapshot: a `# ` line is a heading only in a Markdown file; in a script it is a comment', () => {
+  expect(snapshot('# a\n# b\ncode\n', false).headings).toBe(0)
+  // So dropping comments from a script is never flagged as lost headings.
+  expect(judge(snapshot('# a\n# b\n# c\n' + 'x'.repeat(300), false), snapshot('x'.repeat(300), false), false)).toBe(null)
+})
+
 test('formatSize: short sizes whole, long ones in thousands', () => {
   expect(formatSize(850)).toBe('850')
   expect(formatSize(12_340)).toBe('12.3k')

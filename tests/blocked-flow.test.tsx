@@ -50,6 +50,31 @@ test('a turn whose only trouble is blocked calls is saved, shows on the timeline
   await ui.unmount()
 })
 
+test('a turn whose only trouble is plain failures (a missing file, a failing command) is not a History turn', async ($, on) => {
+  const { clock, history } = world(on, { files: FILES })
+  await $.session.start(START)
+  await clock.settle()
+  await $.turn.start({ turnId: 't1', text: 'poke around' } as never)
+  await $.tool.call({ tool: 'Read', file_path: 'C:\\work\\demo\\missing.md' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'grep nothing --fail' } as never)
+  await $.turn.complete({ ...DONE, turnId: 't1' } as never)
+  await clock.advance(1000)
+  // Nothing was saved but the empty history loaded at the start.
+  expect(history.at(-1)).toEqual([])
+})
+
+test('a turn with edits keeps its plain failures with its refusals', async ($, on) => {
+  const { clock, history } = world(on, { files: FILES })
+  await $.session.start(START)
+  await clock.settle()
+  await $.turn.start({ turnId: 't1', text: 'edit' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: 'C:\\work\\demo\\a.ts', old_string: 'greet', new_string: 'welcome' } as never)
+  await $.tool.call({ tool: 'Read', file_path: 'C:\\work\\demo\\missing.md' } as never)
+  await $.turn.complete({ ...DONE, turnId: 't1' } as never)
+  await clock.advance(1000)
+  expect(lastTurn(history).blocked?.map(b => b.kind)).toEqual(['failed'])
+})
+
 test('a turn with edits and a blocked call lists the blocked call under the step', async ($, on) => {
   const { clock } = world(on, { files: FILES })
   await $.session.start(START)

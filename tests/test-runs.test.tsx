@@ -97,6 +97,18 @@ test('a test command a hook refused is not a run', async ($, on) => {
   await ui.unmount()
 })
 
+test('a test command Claude Code refused, which comes back as an error, is not a run either', async ($, on) => {
+  const { clock } = world(on, {})
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.turn.start({ turnId: 't1', text: 'test' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'npm test --permission-says-no' } as never)
+  await clock.advance(6000)
+  expect(await lineOf(ui)).toBeUndefined()
+  await ui.unmount()
+})
+
 test('PowerShell test runs are kept too', async ($, on) => {
   const { clock } = world(on, {})
   await $.session.start(START)

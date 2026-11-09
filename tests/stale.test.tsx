@@ -105,9 +105,9 @@ test('a file Claude read and a commit then took says "committed", with or withou
   await read($)
   await $.turn.complete({ ...DONE, turnId: 't1' } as never)
   await clock.advance(1000)
-  // HEAD moves, and git says the commit held a.ts.
+  // HEAD moves, and git says what differs since: a.ts.
   git.head = 'bbb'
-  git.log = 'bbb\n'
+  git.log = 'a.ts\n'
   await $.turn.start({ turnId: 't2', text: 'again' } as never)
   await $.turn.complete({ ...DONE, turnId: 't2' } as never)
   await clock.advance(1000)
@@ -132,17 +132,62 @@ test('a file Claude never read, or read and nothing changed, has no marker; a co
   await ui.unmount()
 })
 
-test('a file the read of which fails (too large, binary) is not tracked, and the read still goes through', async ($, on) => {
-  const files = { [A]: 'one\n', 'C:\\work\\demo\\b.ts': 'b\n' }
-  const w = world(on, { dirs: DIRS, files, git: gitWorld(), unreadable: ['a.ts'] })
-  await $.session.start(START)
-  await w.clock.settle()
+test('a binary file is not tracked: read as binary, then changed to text, it gets no marker, and the read still goes through', async ($, on) => {
+  const files: Record<string, string> = { [A]: 'bin\u0000ary', 'C:\\work\\demo\\b.ts': 'b\n' }
+  const { clock, ui } = await setup($, on, files)
   await $.turn.start({ turnId: 't1', text: 'look' } as never)
   const r: any = await read($)
   expect(r.result).toBe('ok')
   await $.turn.complete({ ...DONE, turnId: 't1' } as never)
+  files[A] = 'now text\n'
+  await $.turn.start({ turnId: 't2', text: 'again' } as never)
+  await $.turn.complete({ ...DONE, turnId: 't2' } as never)
+  await clock.advance(1000)
+  expect(await rowText(ui, rowKey)).not.toMatch(/Δ/)
+  await ui.unmount()
+})
+
+test('a read that was refused leaves things as they were: no marker taken off, none made', async ($, on) => {
+  const files: Record<string, string> = { [A]: 'one\ntwo\n', 'C:\\work\\demo\\b.ts': 'b\n' }
+  const refuse: string[] = []
+  const w = world(on, { dirs: DIRS, files, git: gitWorld(), refuse })
+  await $.session.start(START)
+  await w.clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.turn.start({ turnId: 't1', text: 'look' } as never)
+  await read($)
+  await $.turn.complete({ ...DONE, turnId: 't1' } as never)
+  files[A] = 'one\ntwo\nthree\n'
+  await $.turn.start({ turnId: 't2', text: 'again' } as never)
+  await $.turn.complete({ ...DONE, turnId: 't2' } as never)
   await w.clock.advance(1000)
-  expect(plain(String(w.logs.filter(l => /Δ|stale/.test(l))))).toBe('')
+  expect(await rowText(ui, rowKey)).toMatch(/Δ changed outside/)
+  // A hook refuses the next Read: Claude has not seen the new text, so the marker stays.
+  refuse.push('a.ts')
+  await $.turn.start({ turnId: 't3', text: 'again' } as never)
+  const r: any = await read($)
+  expect(r.deny).toBeDefined()
+  await $.turn.complete({ ...DONE, turnId: 't3' } as never)
+  await w.clock.advance(1000)
+  expect(await rowText(ui, rowKey)).toMatch(/Δ changed outside/)
+  await ui.unmount()
+})
+
+test('HEAD is asked once for all the reads of a turn, and git once for all the files read at one HEAD', async ($, on) => {
+  const files = { [A]: 'one\n', 'C:\\work\\demo\\b.ts': 'b\n' }
+  const { clock, ran, git } = await setup($, on, files)
+  await $.turn.start({ turnId: 't1', text: 'look' } as never)
+  await read($)
+  await $.tool.call({ tool: 'Read', file_path: 'C:\\work\\demo\\b.ts' } as never)
+  expect(ran.filter(a => a[1] === 'rev-parse' && a[2] === 'HEAD').length).toBe(1)
+  await $.turn.complete({ ...DONE, turnId: 't1' } as never)
+  git.head = 'bbb'
+  git.log = 'a.ts\nb.ts\n'
+  ran.length = 0
+  await $.turn.start({ turnId: 't2', text: 'again' } as never)
+  await $.turn.complete({ ...DONE, turnId: 't2' } as never)
+  await clock.advance(1000)
+  expect(ran.filter(a => a[1] === 'diff' && a.includes('--name-only')).length).toBe(1)
 })
 
 test('Bash readers count: a file cat read and then changed is marked', async ($, on) => {

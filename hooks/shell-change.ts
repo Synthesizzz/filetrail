@@ -84,9 +84,10 @@ export function namedFiles(command: string, root: string): Watched[] {
 /** A file as it stood: its length in characters, its Markdown headings, and its text (for a capped copy). */
 export type Snapshot = { size: number; headings: number; text: string }
 
-export function snapshot(text: string): Snapshot {
+export function snapshot(text: string, markdown = true): Snapshot {
   let headings = 0
-  for (const line of text.split(/\r?\n/)) if (/^#{1,6}\s/.test(line)) headings++
+  // Only a Markdown file has headings: a `# ` line in a script or a config is a comment.
+  if (markdown) for (const line of text.split(/\r?\n/)) if (/^#{1,6}\s/.test(line)) headings++
   return { size: text.length, headings, text }
 }
 
