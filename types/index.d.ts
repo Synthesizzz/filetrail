@@ -125,6 +125,12 @@ export type TestRun = { command: string; ok: boolean; at: number; ms: number; sc
 /** The session's test runs: the last, and the last per-file and full ones. */
 export type TestRuns = { last: TestRun; file?: TestRun; full?: TestRun }
 
+/** What changed a file Claude had read: its own edit, a commit holding the file, or a change from outside the session. */
+export type StaleBy = 'edit' | 'commit' | 'outside'
+
+/** A file Claude read that has changed since: by what, and when it was found. */
+export type StaleMark = { by: StaleBy[]; at: number }
+
 /** What a git action does, which picks its colour in the bar. */
 export type GitActionKind = 'save' | 'sync' | 'fetch' | 'branch' | 'merge' | 'stash'
 
@@ -201,6 +207,8 @@ declare module 'claude-code' {
       ignored: string[]
       /** This session's test runs, kept on the card after the chip is gone; null before the first. */
       tests: TestRuns | null
+      /** Files Claude read that changed since (lower-cased paths): marked in the tree and the touched list. */
+      stale: Record<string, StaleMark>
     }
   }
 }

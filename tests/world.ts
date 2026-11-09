@@ -12,7 +12,7 @@ export const KEY = 'p:c:/work/demo'
 export const DONE = { durationMs: 1, isAborted: false, reason: 'answer', text: '', answer: '' } as const
 
 /** What `git` answers: the repo's top, `status --porcelain=v1 -b -z` and `diff --numstat HEAD`. */
-export type GitWorld = { top: string; status: string; numstat: string; lsFiles?: string; show?: string; ignored?: string }
+export type GitWorld = { top: string; status: string; numstat: string; lsFiles?: string; show?: string; ignored?: string; head?: string; log?: string }
 
 export type WorldOptions = {
   files?: Record<string, string>
@@ -99,7 +99,10 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     if (argv[0] === 'uname') return out('Linux\n')
     if (argv[0] !== 'git') return out('')
     if (!git) return out('', 128)
-    if (argv[1] === 'rev-parse') return out(`${git.top}\n`)
+    // `rev-parse HEAD` answers the commit a test sets; any other rev-parse is the repo's top.
+    if (argv[1] === 'rev-parse') return out(argv[2] === 'HEAD' ? `${git.head ?? 'h0'}\n` : `${git.top}\n`)
+    // `git log <from>..HEAD -- <path>` answers what a test says it holds.
+    if (argv[1] === 'log') return out(git.log ?? '')
     if (argv[1] === 'status') return out(git.status)
     if (argv[1] === 'diff') return out(git.numstat)
     if (argv[1] === 'ls-files') return out(git.lsFiles ?? '')

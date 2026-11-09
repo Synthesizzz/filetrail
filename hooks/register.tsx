@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, StaleBy, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
@@ -11,6 +11,8 @@ import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from 
 import { blockedOf, callText } from './blocked'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
 import type { Snapshot } from './shell-change'
+import { checksum, judgeStale, remember, staleLabel } from './stale'
+import type { ReadRecord } from './stale'
 import { addRun, testScope } from './test-runs'
 import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
@@ -59,6 +61,7 @@ const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as Tou
 /** The files of the history git ignores (lower-cased): History leaves them out. */
 const ignored = atom({ plugin: 'filetrail', key: 'ignored' } as const, [] as string[])
 const tests = atom({ plugin: 'filetrail', key: 'tests' } as const, null as TestRuns | null)
+const stale = atom({ plugin: 'filetrail', key: 'stale' } as const, {} as Record<string, StaleMark>)
 /** Kept in the session's state, so a reload starts from the head measured before. */
 /** Files the Claude touched list keeps. */
 const MAX_TOUCHED = TOUCHED_MAX
@@ -245,7 +248,10 @@ async function lightReads($: EngineInterface, command: string) {
   for (const t of readTargets(command, root).slice(0, MAX_BASH_TARGETS)) {
     if (!isInside(root, t.path) || !(await $.fs.exists(t.path))) continue
     await touch($, { path: t.path, tone: 'read', follow: t.follow && !followed })
-    if (t.follow) followed = true
+    if (t.follow) {
+      followed = true
+      await noteRead($, t.path).catch(err => $.ui.log(`filetrail: a read was not noted: ${String(err)}`))
+    }
   }
 }
 
@@ -356,6 +362,72 @@ async function recordBlocked($: EngineInterface, call: unknown, result: unknown)
   const entry = { id: `${pending.id}.b${callCount++}`, tool, call: callText(call as { tool: string }), reason: found.reason, kind: found.kind, at }
   pending.blocked = [...(pending.blocked ?? []), entry]
   await showLive($)
+}
+
+/** Files Claude read this session, as they were then: what a later change is measured against. */
+const reads = new Map<string, ReadRecord>()
+
+/** git's HEAD, or null outside a repo or when git does not answer. */
+async function headSha($: EngineInterface): Promise<string | null> {
+  if (isRepo === false) return null
+  const ran = await $.process.run(['git', 'rev-parse', 'HEAD'], { cwd: root, timeoutMs: 5000 }).catch(() => null)
+  return ran && ran.exitCode === 0 ? ran.stdout.trim() || null : null
+}
+
+/** A checksum of a file's text now; null when it is gone, binary, too long or unreadable. */
+async function sumOf($: EngineInterface, path: string): Promise<string | null> {
+  try {
+    if (!(await $.fs.exists(path))) return null
+    const text = String(await $.fs.read(path))
+    return text.length > MAX_WATCH_CHARS || refusal(text) ? null : checksum(text)
+  } catch {
+    return null
+  }
+}
+
+/** Remembers a file of the project as Claude reads it now, and takes any marker off it: what Claude knows is current. */
+async function noteRead($: EngineInterface, path: string) {
+  if (!isInside(root, path)) return
+  const k = lower(path)
+  const sum = await sumOf($, path)
+  if (sum === null) return
+  remember(reads, k, { path: normPath(path), at: await $.clock.now(), sum, head: await headSha($) })
+  if (k in (await read($, stale))) await update($, stale, m => Object.fromEntries(Object.entries(m).filter(([p]) => p !== k)))
+}
+
+const ORDER: StaleBy[] = ['edit', 'commit', 'outside']
+
+/** Marks a file Claude read as edited by Claude, at once (the full check comes when the turn ends). */
+async function markEdited($: EngineInterface, path: string) {
+  const k = lower(path)
+  if (!reads.has(k)) return
+  const at = await $.clock.now()
+  await update($, stale, m => ({ ...m, [k]: { by: [...new Set<StaleBy>(['edit', ...(m[k]?.by ?? [])])].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)), at } }))
+}
+
+/** Whether git holds a commit of `path` newer than the HEAD the file was read at. */
+async function committedSince($: EngineInterface, rec: ReadRecord, head: string | null): Promise<boolean> {
+  if (!rec.head || !head || rec.head === head) return false
+  const ran = await $.process.run(['git', 'log', '--format=%H', '-1', `${rec.head}..HEAD`, '--', relTo(root, rec.path)], { cwd: root, timeoutMs: 10_000 }).catch(() => null)
+  return !!ran && ran.exitCode === 0 && ran.stdout.trim() !== ''
+}
+
+/**
+ * Looks again at every file Claude read: changed on the disk, held by a commit since, or
+ * edited by Claude (from the steps filetrail recorded). The marks are replaced by what it finds.
+ */
+async function refreshStale($: EngineInterface) {
+  if (!reads.size) return
+  const head = await headSha($)
+  const steps = [...(await read($, history)).flatMap(t => t.steps), ...(pending?.steps ?? [])]
+  const at = await $.clock.now()
+  const marks: Record<string, StaleMark> = {}
+  for (const [k, rec] of reads) {
+    const edited = steps.some(s => lower(s.path) === k && s.at >= rec.at && s.status !== 'denied' && s.status !== 'failed' && (EDIT_TOOLS.has(s.tool) || s.tool === 'Bash'))
+    const by = judgeStale(rec, { sum: await sumOf($, rec.path) }, edited, await committedSince($, rec, head))
+    if (by) marks[k] = { by, at }
+  }
+  await update($, stale, () => marks)
 }
 
 /** Keeps a finished test command as the session's last run (one a hook or Claude Code refused never ran). */
@@ -806,6 +878,7 @@ export const register: Register = on => {
     let target: Target | null = null
     try { target = targetOf(e as unknown as { tool: string }) } catch { /* nothing to light */ }
     if (target && target.tone === 'read') await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
+    if (target && target.tone === 'read' && target.follow) await noteRead($, target.path).catch(err => $.ui.log(`filetrail: a read was not noted: ${String(err)}`))
     if (e.tool === 'Bash') {
       const command = String((e as unknown as { command?: unknown }).command ?? '')
       await lightReads($, command).catch(err => $.ui.log(`filetrail: Bash highlight failed: ${String(err)}`))
@@ -843,7 +916,10 @@ export const register: Register = on => {
         if (!isCommit(command)) scheduleGit($)
       }
       if (isCommit(command)) {
-        if (outcomeOf(r) === 'ok') await lightCommit($).catch(err => $.ui.log(`filetrail: commit highlight failed: ${String(err)}`))
+        if (outcomeOf(r) === 'ok') {
+          await lightCommit($).catch(err => $.ui.log(`filetrail: commit highlight failed: ${String(err)}`))
+          await refreshStale($).catch(err => $.ui.log(`filetrail: read files were not checked: ${String(err)}`))
+        }
         scheduleGit($)
       }
       return r
@@ -889,6 +965,7 @@ export const register: Register = on => {
       const dir = lower(parentOf(steps[0].path))
       if (dir in (await read($, listing))) await listDir($, parentOf(steps[0].path))
       scheduleGit($)
+      await markEdited($, steps[0].path).catch(err => $.ui.log(`filetrail: an edit was not marked: ${String(err)}`))
       await refreshPreview($, steps[0].path).catch(err => $.ui.log(`filetrail: the preview did not update: ${String(err)}`))
       if (target) await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     }
@@ -919,6 +996,8 @@ export const register: Register = on => {
     if (onFile) await unlight($, onFile).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     // Bash may have changed files too: list the open folders and read git again.
     await relist($)
+    // Files Claude read earlier may have changed in the turn: its own edit, a commit, or outside.
+    await refreshStale($).catch(err => $.ui.log(`filetrail: read files were not checked: ${String(err)}`))
     // Files may have come or gone: a search already in use gets a fresh list.
     if (await read($, index)) void ensureIndex($).catch(err => $.ui.log(`filetrail: the search list was not rebuilt: ${String(err)}`))
     scheduleGit($)
@@ -1091,6 +1170,7 @@ export const register: Register = on => {
                 refresh: () => fire($, 'refreshing', async () => {
                   await relist($)
                   await refreshGit($)
+                  await refreshStale($)
                   if (await read($, index)) await ensureIndex($)
                 }),
                 toggleDots: () => fire($, 'showing dotfiles', () => update($, files, f => ({ ...f, hideDots: !f.hideDots }))),
@@ -1116,7 +1196,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

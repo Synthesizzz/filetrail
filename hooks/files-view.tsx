@@ -3,10 +3,11 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, StaleMark, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
+import { staleLabel } from './stale'
 import { badgeColors, NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
@@ -325,9 +326,11 @@ export const TOUCHED_SHOWN = 3
 export const TOUCHED_MAX = 8
 /** A flagged file's word: warning yellow, as History's "not applied". */
 const FLAG_COLOR = '#f59e0b'
+/** Before the words that say what changed a file Claude read. */
+const STALE_MARK = 'Δ'
 
 /** `rows`: how many touched files show before "+N more", as the card's handle left it. */
-function touchedSection(els: Els, root: string, touched: readonly TouchedFile[], flash: Readonly<Record<string, Tone>>, open: boolean, actions: FilesActions, rows = TOUCHED_SHOWN) {
+function touchedSection(els: Els, root: string, touched: readonly TouchedFile[], flash: Readonly<Record<string, Tone>>, open: boolean, actions: FilesActions, rows = TOUCHED_SHOWN, stale: Readonly<Record<string, StaleMark>> = {}) {
   const { Box, Text, Button } = els
   const more = touched.length - rows
   const Client = 'Client' in els ? els.Client : undefined
@@ -360,6 +363,8 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
           { t: `${NNBSP}${name}`, name: true, ext: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
           // The folder gives way before the name when the row is short (seen live: "notes.…" beside a whole folder).
           ...(dir ? [{ t: `${NNBSP}${dir}`, dim: true, opt: true }] : []),
+          // A file read and changed since: what changed it, in warning yellow.
+          ...(f.tone === 'read' && stale[lower(f.path)] ? [{ t: `${NNBSP}${STALE_MARK} ${staleLabel(stale[lower(f.path)]!.by)}`, c: FLAG_COLOR }] : []),
           // A shell command shrank or overwrote it: the flag's word in warning yellow, in place of the pill or "Edited".
           f.flag
             ? { t: ` ${f.flag} `, c: FLAG_COLOR, b: true, right: true }
@@ -405,6 +410,8 @@ export function filesView(
   turnFiles: readonly string[] = [],
   /** This session's test runs: the last stays on the card after the chip goes. */
   tests: TestRuns | null = null,
+  /** Files Claude read that changed since, by lower-cased path. */
+  stale: Readonly<Record<string, StaleMark>> = {},
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -450,7 +457,7 @@ export function filesView(
       {/* As filetree heads its tree: the folder, then the branch and its upstream with the repo's changes at the right. */}
       {/* One card for the top of the pane: the folder, its toolbar, the branch and git as chips,
           then what Claude is doing right now and the files it touched this session. */}
-      {nowCard(els, root, listing, last, flash, touchedSection(els, root, touched, flash, files.touchedOpen === true, actions, files.touchedRows ?? TOUCHED_SHOWN), [
+      {nowCard(els, root, listing, last, flash, touchedSection(els, root, touched, flash, files.touchedOpen === true, actions, files.touchedRows ?? TOUCHED_SHOWN, stale), [
           <Box key="name-line" flexDirection="row" gap={1} minWidth={0}>
             <Box key="name-box" flexShrink={1} minWidth={0}>
               <Text weight="semibold" color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
@@ -540,6 +547,8 @@ export function filesView(
             ...(tone || isSelected ? { b: true } : {}), ...(shimmer ? { sh: TONE_SHIMMER[shimmer] } : {}),
           },
         ]
+        // Read by Claude and changed since: a Δ and what changed it.
+        if (!isDir && stale[lower(entry.path)]) segs.push({ t: `${NNBSP}${STALE_MARK} ${staleLabel(stale[lower(entry.path)]!.by)}`, c: FLAG_COLOR })
         if (tone) segs.push({ t: `${NNBSP}· ${TONE_WORD[tone]}`, c: TONE_COLOR[tone], b: true, sh: TONE_SHIMMER[tone] })
         else if (last && last.path === lower(entry.path)) segs.push({ t: `${NNBSP}◂`, c: TONE_COLOR[last.tone] })
         // At the right edge, as VS Code's explorer does: Claude's edits, the lines changed, then
