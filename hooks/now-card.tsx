@@ -7,9 +7,10 @@
 
 import type { EngineInterface, RenderElement } from 'claude-code'
 
-import type { Entry, Stage, StagePose, Tone } from '../types'
+import type { Entry, Stage, StagePose, TestRuns, Tone } from '../types'
 import { relTo } from './history'
-import { badgeColors, splitPath } from './paths'
+import { badgeColors, clockOf, splitPath } from './paths'
+import { disagreement, formatDuration } from './test-runs'
 import { AGENT, COMMAND, crabSvg, GONE, MERGE, PUSH, SEARCH, TERM_FRAMES, TEST } from './crab'
 import type { Pose } from './crab'
 import type { CrabProps } from './crab-client'
@@ -56,6 +57,22 @@ export function spelled(listing: Readonly<Record<string, Entry[]>>, path: string
   return path
 }
 
+/** The last test run as one line (what ran, when, how long) and, when a per-file and a full run disagree, a warning under it. */
+function testLine(els: Els, tests: TestRuns) {
+  const { Box, Text } = els
+  const run = tests.last
+  const differ = disagreement(tests)
+  return (
+    <Box key="test-box" flexDirection="column" minWidth={0}>
+      <Text key="test-line" wrap="wrap">
+        <Text color={run.ok ? PASSED : GONE} weight="semibold">{run.ok ? '✓ Tests passed' : '✗ Tests failed'}</Text>
+        <Text dimColor>{` · ${run.command} · ${clockOf(run.at)} · ${formatDuration(run.ms)}`}</Text>
+      </Text>
+      {differ ? <Text key="test-differ" color="warning" wrap="wrap">{`⚠ ${differ}`}</Text> : null}
+    </Box>
+  )
+}
+
 export function nowCard(
   els: Els, root: string, listing: Readonly<Record<string, Entry[]>>,
   last: { path: string; tone: Tone; at?: number } | null, flash: Readonly<Record<string, Tone>>,
@@ -65,6 +82,8 @@ export function nowCard(
   stage: Stage | null = null,
   /** A main-loop turn is running: with nothing else to show, the crab thinks. */
   working = false,
+  /** The session's test runs: the last stays under the row once the chip has gone. */
+  tests: TestRuns | null = null,
 ) {
   const { Box, Text } = els
   const Svg = svgOf(els)
@@ -116,6 +135,8 @@ export function nowCard(
       {/* The status pill: a Text with a background. */}
       {style && !narrow ? <Text key="now-pill" color={pillInk.c} backgroundColor={pillInk.bg} weight="semibold">{` ${style.pill} `}</Text> : null}
     </Box>
+    {/* The session's last test run, kept after the chip is gone; the chip itself is the row's while it shows. */}
+    {tests && !(stage && stage.pose === 'test') ? testLine(els, tests) : null}
     {/* Below the row: the files Claude touched this session. */}
     {sections}
     </Box>

@@ -193,7 +193,7 @@ const TEST_RUNNERS = new Set(['jest', 'vitest', 'mocha', 'ava', 'pytest', 'phpun
 const TEST_SUBCOMMANDS = new Set(['go', 'cargo', 'dotnet', 'mvn', 'gradle', 'gradlew', 'dbt', 'deno'])
 
 /** Whether one command's words run tests. */
-function runsTests(words: readonly string[]): boolean {
+export function runsTests(words: readonly string[]): boolean {
   const prog = programOf(words[0] ?? '')
   const args = words.slice(1)
   if (SCRIPT_RUNNERS.has(prog)) return args[0] === 'test' || args[0] === 't' || (args[0] === 'run' && /^test(:|$)/.test(args[1] ?? ''))

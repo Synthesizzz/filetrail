@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
+import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
@@ -11,6 +11,7 @@ import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from 
 import { blockedOf, callText } from './blocked'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
 import type { Snapshot } from './shell-change'
+import { addRun, testScope } from './test-runs'
 import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
@@ -57,6 +58,7 @@ const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as P
 const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as TouchedFile[])
 /** The files of the history git ignores (lower-cased): History leaves them out. */
 const ignored = atom({ plugin: 'filetrail', key: 'ignored' } as const, [] as string[])
+const tests = atom({ plugin: 'filetrail', key: 'tests' } as const, null as TestRuns | null)
 /** Kept in the session's state, so a reload starts from the head measured before. */
 /** Files the Claude touched list keeps. */
 const MAX_TOUCHED = TOUCHED_MAX
@@ -354,6 +356,14 @@ async function recordBlocked($: EngineInterface, call: unknown, result: unknown)
   const entry = { id: `${pending.id}.b${callCount++}`, tool, call: callText(call as { tool: string }), reason: found.reason, kind: found.kind, at }
   pending.blocked = [...(pending.blocked ?? []), entry]
   await showLive($)
+}
+
+/** Keeps a finished test command as the session's last run (one a hook or Claude Code refused never ran). */
+async function recordTestRun($: EngineInterface, command: string, started: number, outcome: StepStatus) {
+  if (outcome === 'denied' || commandKind(command) !== 'test') return
+  const at = await $.clock.now()
+  const run = { command: shortCommand(command), ok: outcome === 'ok', at, ms: at - started, scope: testScope(command) }
+  await update($, tests, runs => addRun(runs, run))
 }
 
 /** Takes the paths not yet recorded as deleted and marks them so, before any await: two finders never record one twice. */
@@ -806,9 +816,11 @@ export const register: Register = on => {
       const token = gitStage && ids.includes(gitStage.id) || isCommit(command) ? 0 : await shellStage($, command)
       // The files the command names, as they are before it runs, to see what it did to them.
       const watched = await watchBefore($, command).catch(() => [] as Watch[])
+      const started = await $.clock.now()
       const r = await next(e)
       await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
       await endStage($, token, outcomeOf(r)).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
+      await recordTestRun($, command, started, outcomeOf(r)).catch(err => $.ui.log(`filetrail: a test run was not recorded: ${String(err)}`))
       if (doomed.length) {
         try {
           const goneNow: Doomed[] = []
@@ -840,9 +852,11 @@ export const register: Register = on => {
       const token = await otherStage($, e as unknown as OtherCall).catch(() => 0)
       if (e.tool === 'Agent') helpers++
       const watched = e.tool === 'PowerShell' ? await watchBefore($, String((e as unknown as OtherCall).command ?? '')).catch(() => [] as Watch[]) : []
+      const started = await $.clock.now()
       let r
       try { r = await next(e) } finally { if (e.tool === 'Agent') helpers-- }
       const outcome = outcomeOf(r)
+      if (e.tool === 'PowerShell') await recordTestRun($, String((e as unknown as OtherCall).command ?? ''), started, outcome).catch(err => $.ui.log(`filetrail: a test run was not recorded: ${String(err)}`))
       await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
       if (watched.length && outcome !== 'denied') {
         await recordShellChanges($, watched, new Set()).catch(err => $.ui.log(`filetrail: a changed file was not recorded: ${String(err)}`))
@@ -1102,7 +1116,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

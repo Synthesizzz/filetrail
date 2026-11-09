@@ -119,6 +119,12 @@ export type Preview = { path: string; page: number; source?: string; total?: num
  */
 export type TouchedFile = { path: string; tone: Tone; at: number; by?: DeletedBy; flag?: string }
 
+/** One run of a test command: what ran, whether it passed, when it ended, how long it took, and whether it named a test file (`file`) or ran the suite (`full`). */
+export type TestRun = { command: string; ok: boolean; at: number; ms: number; scope: 'file' | 'full' }
+
+/** The session's test runs: the last, and the last per-file and full ones. */
+export type TestRuns = { last: TestRun; file?: TestRun; full?: TestRun }
+
 /** What a git action does, which picks its colour in the bar. */
 export type GitActionKind = 'save' | 'sync' | 'fetch' | 'branch' | 'merge' | 'stash'
 
@@ -193,6 +199,8 @@ declare module 'claude-code' {
       touched: TouchedFile[]
       /** The files of the history git ignores (lower-cased), left out of History. */
       ignored: string[]
+      /** This session's test runs, kept on the card after the chip is gone; null before the first. */
+      tests: TestRuns | null
     }
   }
 }

@@ -3,7 +3,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, Tone, TouchedFile, Turn } from '../types'
+import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
@@ -403,6 +403,8 @@ export function filesView(
   working = false,
   /** This turn's files (the last turn's, once it ended), for the Now tree. */
   turnFiles: readonly string[] = [],
+  /** This session's test runs: the last stays on the card after the chip goes. */
+  tests: TestRuns | null = null,
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -464,7 +466,7 @@ export function filesView(
               )}
           </Box>,
         branchChips(els, git, gitLog, files.gitOpen === true, actions),
-      ], width < NARROW_COLUMNS, stage, working)}
+      ], width < NARROW_COLUMNS, stage, working, tests)}
       {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">
