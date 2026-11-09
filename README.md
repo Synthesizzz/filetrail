@@ -20,6 +20,11 @@ It is built for the Claude Code desktop app and also works in the terminal.
 - **Git at a glance.** The branch, ahead/behind counts, changed lines, and the last git commands Claude ran, with GitHub's own icons.
 - **Every edit, kept.** A History timeline of each turn's changes, with diffs you can step through, replay or export as Markdown.
 - **Deleted files aren't lost.** Files that Claude, or you, delete are recorded with a copy of their text, so you can check them later.
+- **Shell damage is flagged.** A file a Bash or PowerShell command shrank by more than half, or overwrote, gets a yellow flag in the card and a step in History with its old text.
+- **Nothing refused vanishes.** Every tool call that was refused or failed is kept in its turn, with who stopped it and why.
+- **The last test run stays.** The card keeps the command, the result and the time after the chip is gone, and warns when a one-file run and a full run disagree.
+- **Stale reads are marked.** A file Claude read that has since been edited, committed or changed outside the session carries a `Δ` and says by what.
+- **Pictures show.** PNG, JPEG and SVG files open in the pane viewer (drawn on the desktop, described in words on the terminal).
 
 ## Install
 
@@ -75,7 +80,8 @@ At the top is a **card** showing what's happening right now. Roughly:
 - **Right now:** the crab, what Claude is doing ("Reading client.test.js · tests"), and a coloured pill: violet reading, orange editing, green committed, red deleted. Between actions it says `Idle` and names the last file touched.
 - **More than files:** the card also shows a push (teal), a merge (purple), a search (amber, `Searching "greet" · src`), a shell command in Bash or PowerShell (blue, `Running npm run build`), tests (`Testing…`, then a green `Tests passed` or a red `Tests failed`), a helper Claude started (pink, `Helper review the diff`), and any tool call that failed or was refused (red, `Edit failed · app.ts`). Each shows while it runs and for 5 seconds after. When several things happen, the newest is shown; a helper keeps the card while it works. While a turn runs and nothing else is on, the crab is `Thinking`.
 - **What counts as tests:** `npm`/`pnpm`/`yarn`/`bun test`, `jest`, `vitest`, `mocha`, `playwright test`, `pytest` (or `python -m pytest`), `go test`, `cargo test`, `dotnet test`, `mvn`/`gradle test`, `dbt test`, `deno test` and `claude plugin test`.
-- **TOUCHED:** the files Claude read, edited, committed or deleted this session, and any you deleted, newest first. Three are shown, with `+N more` for the rest (eight at most). Click a row to jump to it in the tree, double-click to view it, right-click to copy its path.
+- **The last test run:** the `Tests passed` / `Tests failed` chip goes after 5 seconds, but a line stays under the card's row: `✓ Tests passed · npm test · 17:05 · 3.2s`. A run that names a test file (`pytest tests/test_a.py`, `vitest run a.test.ts`) or picks tests by name (`-k`, `--grep`) is kept apart from a run of the whole suite, and when the two give different results the card says so: `⚠ per-file run passed, full run failed`. Nothing shows until the first run, and a command that was refused is not a run.
+- **TOUCHED:** the files Claude read, edited, committed or deleted this session, and any you deleted, newest first. Three are shown, with `+N more` for the rest (eight at most). Click a row to jump to it in the tree, double-click to view it, right-click to copy its path. A yellow flag in place of the word marks a file a shell command harmed (`Shrank −67%`, `Overwritten`, see [Good to know](#good-to-know)), and a `Δ` after a file Claude read says it has changed since (`Δ edited`, `Δ committed`, `Δ changed outside`).
 - **Resize the card:** hold the `─── ⋯ ───` bar along its bottom border and drag it down to list more touched files (up to eight), or up to list fewer, down to none. While you hold, the bar previews the size (`▼ 5 files · + c.md, b.md`); the list changes when you let go, the new files typing themselves in. The size is remembered.
 
 Under the card is the **file tree**, with two views you switch between with `All | Now` above it (your choice is remembered):
@@ -117,12 +123,13 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 - **Search** by file name across the project. Names that start with your text come first. Pick a result to open the tree there.
 - **Select a file** to hand it to Claude: `Claude sees: notes.md` appears, and every prompt you send carries a line naming it, so "this file" means it. Beside it are History, Open (in your default app), Copy path and Copy full path. `✕` clears it.
 - Typing `@path/to/file` in a prompt also opens the tree to that file.
-- **Double-click** a file to view it in the pane: Markdown is rendered, code is highlighted with line numbers, 400 lines a page. `← files` goes back. Binary files and files over 2 MB are not shown.
+- **Double-click** a file to view it in the pane: Markdown is rendered, code is highlighted with line numbers, 400 lines a page. `← files` goes back. Binary files and files over 2 MB are not shown. PNG, JPEG and SVG files are pictures: on the desktop one is drawn (at most 320 px wide) with a line under it saying its type, its size in pixels and in bytes; a picture over about 88 KB, and every picture on the terminal, is that line of words alone, with `↗` to open it in your image viewer.
 - **Toolbar:** `↻` refresh, `◉`/`○` show or hide dotfiles, `⊟` collapse all, `⌖` back to the selected file. Hover an icon to see what it does. A click answers at once: the icon flashes orange (refresh spins) and what was done shows in green for a moment (`✓ Refreshed`, `✓ Dotfiles hidden`).
 
 ### The History tab
 
-- A **timeline** of the turns that changed files, newest first, grouped by day (`TODAY`, `YESTERDAY`, `OCT 14`). Each turn shows the time, the first line of your prompt, the files, and `+N -N`. Edits that were refused or failed are counted separately, in yellow.
+- A **timeline** of the turns that changed files, newest first, grouped by day (`TODAY`, `YESTERDAY`, `OCT 14`). Each turn shows the time, the first line of your prompt, the files, and `+N -N`. Edits that were refused or failed are counted separately, in yellow, and so is a turn's `N blocked` (see below).
+- **Blocked calls:** every tool call of a turn that was refused or ended in an error (Bash, Read, Edit and the rest) is kept with the tool, what it named and the reason the engine gave, and marked `refused (hook)`, `refused (Claude Code)` or `failed`. Open the turn to see the list under its edits. A turn with only blocked calls still gets a row, `no file edits · 1 blocked`. The list is read from what the engine reports, so the split between a hook and Claude Code's own refusal is a guess from the words of the reason.
 - While Claude works, the current turn sits on top as **Now**, growing with each edit.
 - **Open a turn** to step through its edits one diff at a time: numbered cells, Prev and Next, the file, tool and line, and the diff. Long diffs fold after 20 lines, with Show all.
 - **Click a file name** to see its edits across every turn. Show in Files takes you to it in the tree. View file (`v`) shows it at the edited line.
@@ -165,7 +172,8 @@ In the line above the prompt, `r` presses Replay once that line has the keys (cl
 
 - **It's its own pane.** Mods can't draw into the desktop app's built-in Files panel, so filetrail docks on the right instead.
 - **Desktop first.** It works in the terminal, but the terminal layout has had less care.
-- **History records the built-in file tools** (Edit, Write, MultiEdit). A file changed by a Bash command isn't in History, except deletions, but the tree and git status catch up when the turn ends.
+- **History records the built-in file tools** (Edit, Write, MultiEdit). A file changed by a Bash or PowerShell command is in History only when the command names it (a script, a redirect, `tee`, `sed -i`) and it came out much worse: shrunk by more than half, down to under half its `#` headings, or rewritten by a `>` redirect. Then it is a `Bash` step with its old text kept as removed lines and a yellow flag in the card. A file the command does not name (a script that opens its own files) is not watched. Everything else the command changed shows only when the tree and git status catch up at the end of the turn.
+- **"Changed since" is a guess from the disk and git.** A read file is compared by a checksum of its text and by commits since the read; "changed outside" means the text differs and neither Claude's edit nor a commit explains it. Files too large to read or binary are not tracked, and a read by a helper may not count.
 - **Bash is read from the command's words, not its output.** A command built at run time (`$VAR`, backticks) or anything after a `cd` is skipped, so an unusual command may be missed. A failed git command is one where Bash reported an error.
 - **Diffs:** an Edit's diff covers only the replaced text, not the whole file. A Write of a file over 400 lines shows as all removed, then all added.
 - **Deletions you make** are noticed only while a session is open, and only in folders on show or for files git tracks. A file that disappears while another appears in the same folder is treated as a rename. Deletions found within 5 seconds after a turn count as Claude's (for commands like `rm *.log` that filetrail can't read).
