@@ -25,6 +25,7 @@ It is built for the Claude Code desktop app and also works in the terminal.
 - **The last test run stays.** The card keeps the command, the result and the time after the chip is gone, and warns when a one-file run and a full run disagree.
 - **Stale reads are marked.** A file Claude read that has since been edited, committed or changed outside the session carries a `Δ` and says by what.
 - **Pictures show.** PNG, JPEG and SVG files open in the pane viewer (drawn on the desktop, described in words on the terminal).
+- **Helpers are listed.** When Claude starts a subagent, the card shows it in a short strip, and an Agents tab has a card for each: its task, how long it worked, its calls and the files it read or wrote.
 
 ## Install
 
@@ -140,11 +141,21 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 - History is kept across sessions for each project: the last 50 turns, up to 200 diff lines per edit, and 3 MiB in total across all projects (the least recently used project is dropped first).
 - On a wide pane (about 100 columns or more), History splits in two: turns on the left, the picked turn on the right.
 
+### The Agents tab
+
+The tab appears, beside Files and History, once Claude has started a helper (a subagent) in the session, and `/trail agents` opens the pane on it at any time.
+
+- A **card for each helper**, those at work first: its type and the task it was given, whether it is working, done or failed, how long it worked, how many tools it called, and the files it read (`◉`) or wrote (`✎`). Press a file to see it in the pane.
+- The **strip on the card** (the Files tab's top) names the helpers at work, two at most, with `+N more helper`; press it to open the tab. It goes when none is working.
+- The files are the ones a helper named in its own `Read`, `Edit` and `Write` calls that went through. What a shell command did to files is not counted for a helper. The list is kept for the session (50 helpers, 30 files each) and starts again when the session does; a helper that was already running comes back from Claude Code's own list, without its calls and files.
+- Helpers are read from what Claude Code reports as they start, call tools and finish, so the tab needs no polling. Tokens and cost are not shown here.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `/trail` | Open the pane |
+| `/trail agents` | Open the pane on the Agents tab |
 | `/trail replay` | Open the latest turn that changed files |
 | `/trail export` | Save the history as Markdown and say where |
 | `/trail clear` | Say how many turns would be deleted. `/trail clear yes` deletes this project's history (other projects are left alone) |

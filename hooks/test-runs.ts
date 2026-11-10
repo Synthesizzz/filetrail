@@ -29,6 +29,22 @@ export function testScope(command: string): TestRun['scope'] {
   return 'full'
 }
 
+/**
+ * The part of a command line that runs the tests, for naming the run: `npm test` out of
+ * `cd /a/b && npm test`. The whole command when no part is found (the caller only asks
+ * about commands that run tests).
+ */
+export function testCommand(command: string): string {
+  for (const segment of splitCommands(command)) {
+    const words = tokenize(segment)
+    if (!words) continue
+    const rest = [...words]
+    while (rest.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(rest[0]!)) rest.shift()
+    if (rest.length && runsTests(rest)) return segment.trim()
+  }
+  return command
+}
+
 /** 840 as `840ms`, 3240 as `3.2s`, 63000 as `1m 3s`. */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`

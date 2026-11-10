@@ -17,7 +17,7 @@ import { dimensionsOf, imageKind, imageSvg, MAX_DRAW_BYTES } from './image'
 import type { ImageKind } from './image'
 import { checksum, judgeStale, remember, staleLabel } from './stale'
 import type { ReadRecord } from './stale'
-import { addRun, testScope } from './test-runs'
+import { addRun, testCommand, testScope } from './test-runs'
 import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
@@ -458,7 +458,7 @@ async function recordTestRun($: EngineInterface, command: string, started: numbe
   const stopped = blockedOf(result)?.kind
   if (outcome === 'denied' || stopped === 'hook' || stopped === 'harness' || commandKind(command) !== 'test') return
   const at = await $.clock.now()
-  const run = { command: shortCommand(command), ok: outcome === 'ok', at, ms: at - started, scope: testScope(command) }
+  const run = { command: shortCommand(testCommand(command)), ok: outcome === 'ok', at, ms: at - started, scope: testScope(command) }
   await update($, tests, runs => addRun(runs, run))
 }
 
@@ -792,7 +792,7 @@ async function flashError($: EngineInterface, word: string, target: string, dir 
 /** A shell command's stage: tests, a search or a plain command, named by its first line. */
 function shellStage($: EngineInterface, command: string): Promise<number> {
   const kind = commandKind(command)
-  return startStage($, { pose: kind, target: kind === 'test' ? '' : shortCommand(command), ...(kind === 'test' ? { dir: shortCommand(command) } : {}) })
+  return startStage($, { pose: kind, target: kind === 'test' ? '' : shortCommand(command), ...(kind === 'test' ? { dir: shortCommand(testCommand(command)) } : {}) })
 }
 
 /** The keys of the other tools' calls the crab reads. */
@@ -1257,7 +1257,7 @@ export const register: Register = on => {
             onPress={go('history')} />
           {/* Shown once a helper has started this session, or while the tab is open. */}
           {mates.length || current === 'agents'
-            ? <Button key="tab-agents" label={tabLabel(mates)} hotkey="a"
+            ? <Button key="tab-agents" label={tabLabel(mates)}
                 {...(current === 'agents' ? { variant: 'primary' as const } : { dimColor: true })}
                 onPress={goAgents} />
             : null}

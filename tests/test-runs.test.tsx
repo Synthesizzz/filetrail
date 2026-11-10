@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { addRun, disagreement, formatDuration, testScope } from '../hooks/test-runs'
+import { addRun, disagreement, formatDuration, testCommand, testScope } from '../hooks/test-runs'
 import type { TestRun } from '../types'
 import { DONE, PANE, START, hasText, plain, world } from './world'
 
@@ -17,6 +17,14 @@ test('testScope: a run that names a test file or filters by name is per-file; th
   expect(testScope('pytest -k greet')).toBe('file')
   expect(testScope('jest --testNamePattern greet')).toBe('file')
   expect(testScope('cd sub && npm test')).toBe('full')
+})
+
+test('testCommand names the part that runs the tests, not the cd or the pipe around it', () => {
+  expect(testCommand('npm test')).toBe('npm test')
+  expect(testCommand('cd /c/work/demo && npm test')).toBe('npm test')
+  expect(testCommand('cd sub; pytest tests/test_a.py -q | tail -3')).toBe('pytest tests/test_a.py -q')
+  expect(testCommand('CI=1 npm test && echo done')).toBe('CI=1 npm test')
+  expect(testCommand('echo hello')).toBe('echo hello')
 })
 
 test('formatDuration', () => {
@@ -65,6 +73,10 @@ test('the last test run stays on the card after the chip is gone: command, resul
   await $.tool.call({ tool: 'Bash', command: 'npm test --fail' } as never)
   await clock.advance(6000)
   expect(await lineOf(ui)).toMatch(/^✗ Tests failed · npm test --fail · /)
+  // Run after a cd, the line names the tests, not the cd.
+  await $.tool.call({ tool: 'Bash', command: 'cd /c/work/demo && npm test' } as never)
+  await clock.advance(6000)
+  expect(await lineOf(ui)).toMatch(/^✓ Tests passed · npm test · /)
   await ui.unmount()
 })
 
