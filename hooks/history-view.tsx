@@ -10,6 +10,7 @@ import { SELECTED_BG, TONE_SHIMMER } from './files-view'
 import { clip, clipCells, clockOf, dayLabel, formatAt, gapMinutes, gapText, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS, wrapLines } from './paths'
 
 export { dayLabel, formatAt }
+import { NO_SVG } from './octicons'
 import { rowPresses } from './presses'
 import type { RowProps, Seg } from './row'
 
@@ -140,14 +141,43 @@ export function diffLineText(l: DiffLine, num: string, gutterWidth: number): str
   return prefix + keepIndent(l.t)
 }
 
+/**
+ * One diff line split in two columns: the left holds the number and the mark in
+ * non-breaking spaces (the same width on every row of a diff, `width` cells), the
+ * code its indentation kept. A line that wraps then sits under its own first line.
+ */
+export function diffParts(l: DiffLine, num: string, gutterWidth: number): { left: string; code: string; width: number } {
+  const mark = l.op === '~' ? ' ' : l.op
+  const left = `${gutterWidth ? num.padStart(gutterWidth) + ' ' : ''}${mark}`.replace(/ /g, NBSP)
+  return { left, code: keepIndent(l.t), width: left.length }
+}
+
+/** An added row's fill: a faint green; a removed row's, a faint red. Desktop only: the terminal paints a translucent fill opaque. */
+export const ADD_BG = '#22c55e24'
+export const DEL_BG = '#ef444424'
+
 function diffRows(els: Els, step: Step, max = Infinity) {
-  const { Text } = els
-  if (!step.diff.length) return [<Text dimColor>  (no line changes)</Text>]
+  const { Box, Text } = els
+  // The desktop only: the terminal draws a translucent fill opaque (its table is marked in NO_SVG).
+  const tinted = 'Client' in els && !!els.Client && !NO_SVG.has(els)
+  if (!step.diff.length) return [<Text key="diff-none" dimColor>  (no line changes)</Text>]
   const nums = gutter(step.diff, step.line)
   const w = Math.max(0, ...nums.map(n => n.length))
   return step.diff.slice(0, max).map((l, k) => {
     const color = l.op === '+' ? 'success' : l.op === '-' ? 'error' : undefined
-    return <Text mono wrap="wrap" dimColor={l.op === ' ' || l.op === '~'} {...(color ? { color } : {})}>{diffLineText(l, nums[k]!, w)}</Text>
+    const dim = l.op === ' ' || l.op === '~'
+    const tint = tinted ? (l.op === '+' ? ADD_BG : l.op === '-' ? DEL_BG : undefined) : undefined
+    const part = diffParts(l, nums[k]!, w)
+    return (
+      <Box key={`diff-row-${k}`} flexDirection="row" gap={1} {...(tint ? { backgroundColor: tint } : {})}>
+        <Box key={`diff-gutter-${k}`} width={part.width} flexShrink={0}>
+          <Text mono dimColor={dim} {...(color ? { color } : {})}>{part.left}</Text>
+        </Box>
+        <Box key={`diff-code-${k}`} flexGrow={1} flexShrink={1} minWidth={0}>
+          <Text mono wrap="wrap" dimColor={dim} {...(color ? { color } : {})}>{part.code}</Text>
+        </Box>
+      </Box>
+    )
   })
 }
 
@@ -373,6 +403,11 @@ function blockedSection(els: Els, turn: Turn) {
   )
 }
 
+/** The frame of a step's card: red for an edit the person refused, yellow for one that failed or got no answer, else grey. */
+function cardColor(step: Step): string {
+  return step.status === 'denied' ? 'error' : step.status === 'ok' ? QUIET_COLOR : 'warning'
+}
+
 function stepper(
   els: Els, turns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, layout: Layout,
   liveId: string | null,
@@ -429,24 +464,27 @@ function stepper(
         ))}
       </Box>
       <Text weight="semibold">step {k + 1} of {steps.length}</Text>
-      <Box key="file-row" flexDirection="row" flexWrap="wrap" gap={2}>
-        {/* Narrow, the file name leads: a path cut at the end loses the part that matters. */}
-        {layout.narrow
-          ? <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}><Text weight="semibold">{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}</Button>
-          : <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}>{step.rel}</Button>}
-        <Button key="reveal" label="Show in Files" hotkey="o" dimColor onPress={() => actions.reveal(step.path)} />
-        <Button key="view-file" label="View file" hotkey="v" dimColor onPress={() => actions.view(step.path, step.line)} />
-      </Box>
-      <Box key="meta" flexDirection="row" flexWrap="wrap" gap={2}>
-        <Text dimColor>{step.tool}{step.note ? ` · ${step.note}` : ''}{step.line !== null ? ` · line ${step.line}` : ''}{view.file !== null ? ` · ${formatAt(turn.at, now)}` : ''}</Text>
-        <Text color="success">+{step.add}</Text>
-        <Text color="error">-{step.del}</Text>
-        {status ? <Text color={step.status === 'denied' ? 'error' : 'warning'}>{status}</Text> : null}
-      </Box>
-      <Box key="diff" flexDirection="column" marginTop={1}>
-        {diffRows(els, step, folds && !view.full ? FOLD_LINES : Infinity)}
-        {folds && !view.full && <Button key="show-all" label={`Show all (${step.diff.length - FOLD_LINES} more lines)`} hotkey="s" dimColor onPress={() => set({ ...view, step: k, full: true })} />}
-        {folds && view.full && <Button key="show-fewer" label="Show fewer" hotkey="s" dimColor onPress={() => set({ ...view, step: k, full: false })} />}
+      {/* One framed card for the step: the file as its head, then what the edit was, then its lines. */}
+      <Box key="step-card" flexDirection="column" borderStyle="round" borderColor={cardColor(step)} paddingX={1} minWidth={0} overflow="hidden">
+        <Box key="file-row" flexDirection="row" flexWrap="wrap" gap={2}>
+          {/* Narrow, the file name leads: a path cut at the end loses the part that matters. */}
+          {layout.narrow
+            ? <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}><Text weight="semibold">{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}</Button>
+            : <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}>{step.rel}</Button>}
+          <Button key="reveal" label="Show in Files" hotkey="o" dimColor onPress={() => actions.reveal(step.path)} />
+          <Button key="view-file" label="View file" hotkey="v" dimColor onPress={() => actions.view(step.path, step.line)} />
+        </Box>
+        <Box key="meta" flexDirection="row" flexWrap="wrap" gap={2}>
+          <Text dimColor>{step.tool}{step.note ? ` · ${step.note}` : ''}{step.line !== null ? ` · line ${step.line}` : ''}{view.file !== null ? ` · ${formatAt(turn.at, now)}` : ''}</Text>
+          <Text color="success">+{step.add}</Text>
+          <Text color="error">-{step.del}</Text>
+          {status ? <Text color={step.status === 'denied' ? 'error' : 'warning'}>{status}</Text> : null}
+        </Box>
+        <Box key="diff" flexDirection="column" marginTop={1}>
+          {diffRows(els, step, folds && !view.full ? FOLD_LINES : Infinity)}
+          {folds && !view.full && <Button key="show-all" label={`Show all (${step.diff.length - FOLD_LINES} more lines)`} hotkey="s" dimColor onPress={() => set({ ...view, step: k, full: true })} />}
+          {folds && view.full && <Button key="show-fewer" label="Show fewer" hotkey="s" dimColor onPress={() => set({ ...view, step: k, full: false })} />}
+        </Box>
       </Box>
       <Box key="nav" flexDirection="row" flexWrap="wrap" gap={2} marginTop={1}>
         <Button key="prev" label="◀ Prev" hotkey="p" onPress={() => go(k - 1)} />

@@ -42,7 +42,9 @@ test('narrow: the file name leads, its folder dimmed after it', async ($, on) =>
   await ui.press({ key: 'tab-history' })
   await pressRow(ui, 'turn-t1')
   expect(await rowText(ui, 'file-filter')).toBe('a.ts src/lib')
-  expect(await hasText(ui, '3 - return greet(name)'.replace('- ', '-     '))).toBe(true)
+  // The number and the mark in the left column, the code with its indent in the right one.
+  expect(await hasText(ui, '3 -')).toBe(true)
+  expect(await hasText(ui, '    return greet(name)')).toBe(true)
   expect(await ui.find({ key: 'back' })).toBeDefined()
   await ui.unmount()
 })

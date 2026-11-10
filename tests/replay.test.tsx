@@ -131,16 +131,16 @@ test(`a long diff folds at ${FOLD_LINES} lines; Show all unfolds it until anothe
   await ui.press({ key: 'tab-history' })
   await pressRow(ui, 'turn-t1')
 
-  expect(await hasText(ui, `+ line ${FOLD_LINES - 1}`)).toBe(true)
-  expect(await hasText(ui, `+ line ${FOLD_LINES}`)).toBe(false)
+  expect(await hasText(ui, `line ${FOLD_LINES - 1}`)).toBe(true)
+  expect(await hasText(ui, `line ${FOLD_LINES}`)).toBe(false)
   expect((await ui.find({ key: 'show-all' }))?.text).toBe('Show all (10 more lines)')
 
   await ui.press({ key: 'show-all' })
-  expect(await hasText(ui, `+ line ${FOLD_LINES + 9}`)).toBe(true)
+  expect(await hasText(ui, `line ${FOLD_LINES + 9}`)).toBe(true)
   expect(await ui.find({ key: 'show-fewer' })).toBeDefined()
 
   await ui.press({ key: 'next' })
   await ui.press({ key: 'prev' })
-  expect(await hasText(ui, `+ line ${FOLD_LINES}`)).toBe(false)
+  expect(await hasText(ui, `line ${FOLD_LINES}`)).toBe(false)
   await ui.unmount()
 })
