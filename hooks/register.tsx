@@ -1155,6 +1155,12 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Logged only: a close that never reaches here is the surface's, one that does is let through.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    $.ui.log(`filetrail: pane close from ${e.origin.kind}`)
+    return next(e)
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     // The terminal's table carries an Svg that draws nothing (seen in the test kit: an empty
     // Box): left out there, the crab falls back to its blocks and the branch to its glyph.
