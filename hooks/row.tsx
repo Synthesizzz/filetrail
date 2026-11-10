@@ -30,8 +30,8 @@ export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boole
  * than have it pop in whole: a list can only grow a line at a time.
  */
 export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number; bg?: string; mono?: boolean; reveal?: boolean; inset?: number }
-/** What a row posts: a click, the second click of a double-click, a right-click (shift for the whole path) or a click with Ctrl held. */
-export type RowPost = { press: true } | { open: true } | { copy: true; full: boolean } | { reveal: true }
+/** What a row posts: a click, the second click of a double-click, a right-click (shift for the whole path), a click with Ctrl held or one with Alt held. */
+export type RowPost = { press: true } | { open: true } | { copy: true; full: boolean } | { reveal: true } | { guard: true }
 
 /** Two clicks this close (ms) on one row are a double-click, as filetree times them. */
 export const DOUBLE_MS = 450
@@ -167,6 +167,8 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
     if (e.type !== 'down') return
     if (e.button === 'right') { surface.post({ copy: true, full: e.shift === true } satisfies RowPost); return }
     if ((e.button ?? 'left') !== 'left') return
+    // Alt held: guard the row's file or folder, or let it go. Like Ctrl's, it selects nothing and is no first click.
+    if (e.alt === true) { surface.post({ guard: true } satisfies RowPost); return }
     // Ctrl held: show the row in the file manager, as in a file explorer. It selects nothing and is no first click of a double-click.
     if (e.ctrl === true) { surface.post({ reveal: true } satisfies RowPost); return }
     // A second click soon after the first opens; the first has already pressed (selected).

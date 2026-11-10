@@ -30,6 +30,8 @@ export type WorldOptions = {
   unreadable?: string[]
   /** Calls on a path ending in one of these are refused by a hook; a test can add to it as it goes. */
   refuse?: string[]
+  /** Store keys whose read fails, as a store that is down does. */
+  unreadableKeys?: string[]
   /** Picture files by path, as the base64 `fs.read(path, { as: 'bytes' })` answers. */
   images?: Record<string, string>
   /** The engine's agent list as `$.agent.list()` answers it; a test can change the array it gets back as it goes. */
@@ -40,7 +42,7 @@ export type WorldOptions = {
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [], agents = [], exits }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [], unreadableKeys = [], agents = [], exits }: WorldOptions = {}) {
   mock.env(on, env)
   // A subagent starts: the engine answers its id, as it did on a real one (`ag1`, `ag2`, ...).
   let spawned = 0
@@ -56,7 +58,10 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   const toasts: string[] = []
   on('ui.toast', (_$: any, e: any) => { toasts.push(String(e.text)); return { value: undefined } })
   const store = new Map<string, unknown>(Object.entries(stored))
-  on('store.get', (_$: any, e: any) => ({ value: store.get(e.key) }))
+  on('store.get', (_$: any, e: any) => {
+    if (unreadableKeys.includes(e.key)) throw new Error('store is down')
+    return { value: store.get(e.key) }
+  })
   on('store.set', (_$: any, e: any) => { store.set(e.key, JSON.parse(JSON.stringify(e.value))); return { value: undefined } })
   on('store.delete', (_$: any, e: any) => { store.delete(e.key); return { value: undefined } })
   const history: Turn[][] = []
@@ -83,6 +88,8 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     if (e.as === 'bytes') return { value: { base64: images[e.path] } }
     return { value: files[e.path] }
   })
+  // The engine's own verdict on a call, as it stands beneath the mod: run it.
+  on('tool.check', () => ({ decision: 'allow' }))
   on('tool.call', (_$: any, e: any) => {
     if (String(e.file_path).endsWith('denied.ts')) return { deny: 'The user refused this edit.' }
     if (e.file_path && refuse.some(end => String(e.file_path).endsWith(end))) return { deny: 'Not now: a hook refused this.' }

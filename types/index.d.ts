@@ -235,6 +235,8 @@ declare module 'claude-code' {
       turnFiles: string[]
       /** The file shown in place of the tree, or null for the tree. */
       preview: Preview | null
+      /** The files and folders Claude may not change, as full paths (a copy of the store's list, for the tree to draw). */
+      guards: string[]
       /** The files Claude touched this session, newest first, eight at most. */
       touched: TouchedFile[]
       /** The files of the history git ignores (lower-cased), left out of History. */

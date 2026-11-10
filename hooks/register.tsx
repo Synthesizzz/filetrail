@@ -11,6 +11,7 @@ import { agentsView, tabLabel } from './agents-view'
 import { called, finished, joined, reconciled, resumed, running } from './helpers'
 import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
 import { blockedOf, callText } from './blocked'
+import { coveredBy, guardReason, mentionedGuard, toggled, writtenPath } from './guard'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
 import type { Snapshot } from './shell-change'
 import { dimensionsOf, imageKind, imageSvg, MAX_DRAW_BYTES } from './image'
@@ -23,7 +24,7 @@ import { fullCopy, openCommand, osOf, relativeCopy, revealCommand } from './open
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
 import { filesView, TOUCHED_MAX } from './files-view'
-import { clearRows, modePresses, rowCopies, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
+import { clearRows, modePresses, rowCopies, rowGuards, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import { NO_SVG } from './octicons'
@@ -56,6 +57,8 @@ const working = atom({ plugin: 'filetrail', key: 'working' } as const, false)
 const turnFiles = atom({ plugin: 'filetrail', key: 'turnFiles' } as const, [] as string[])
 /** The tree's view, kept for the next session. */
 const MODE_KEY = 'filetrail:treeMode'
+/** The files and folders Claude may not change, as full paths: the person's own list, kept in filetrail's store and never in the project. */
+const GUARDS_KEY = 'filetrail:guards'
 /** The touched files the card shows, as its handle left it, kept for the next session. */
 const ROWS_KEY = 'filetrail:touchedRows'
 /** This turn's files kept at most, for the Now tree. */
@@ -66,6 +69,8 @@ const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as Tou
 const ignored = atom({ plugin: 'filetrail', key: 'ignored' } as const, [] as string[])
 const tests = atom({ plugin: 'filetrail', key: 'tests' } as const, null as TestRuns | null)
 const stale = atom({ plugin: 'filetrail', key: 'stale' } as const, {} as Record<string, StaleMark>)
+/** The guards (see GUARDS_KEY) as the tree draws them. */
+const guards = atom({ plugin: 'filetrail', key: 'guards' } as const, [] as string[])
 /** The session's helpers (subagents), for the Agents tab and the card's strip. (`helpers` below counts those at work, for the crab.) */
 const crew = atom({ plugin: 'filetrail', key: 'helpers' } as const, [] as Helper[])
 /** The helpers whose rows are open to their files in the Agents tab (ids); a press on a row's task opens or closes it. */
@@ -391,6 +396,59 @@ async function recordBlocked($: EngineInterface, call: unknown, result: unknown)
   const entry = { id: `${pending.id}.b${callCount++}`, tool, call: callText(call as { tool: string }), reason: found.reason, kind: found.kind, at }
   pending.blocked = [...(pending.blocked ?? []), entry]
   await showLive($)
+}
+
+/** The guards in the store; anything else there reads as none. */
+async function readGuards($: EngineInterface): Promise<string[]> {
+  const saved = await $.store.get(GUARDS_KEY)
+  return Array.isArray(saved) ? saved.filter((g): g is string => typeof g === 'string' && g !== '') : []
+}
+
+/** Guards `path` (a file or a folder), or lets it go; one inside a guarded folder is held by that folder, and the person is told which. */
+async function toggleGuard($: EngineInterface, path: string) {
+  const list = await readGuards($)
+  const exact = list.some(g => lower(g) === lower(path))
+  const above = coveredBy(list, path)
+  if (above !== undefined && !exact) {
+    $.ui.toast(`filetrail: ${relTo(root, path)} is already guarded by ${relTo(root, above)}`)
+    return
+  }
+  const next = toggled(list, path)
+  await $.store.set(GUARDS_KEY, next)
+  await update($, guards, () => next)
+  $.ui.toast(exact ? `filetrail: guard lifted from ${relTo(root, path)}` : `filetrail: guarded ${relTo(root, path)}`)
+}
+
+/** Said once a session: a store that cannot be read means calls run unguarded, and that is not left silent. */
+let guardsOffSaid = false
+
+/**
+ * Why a call may not run, when a guard stops it: an edit of a guarded file or of anything in a
+ * guarded folder, by Claude or a helper. Undefined when nothing stops it. It never throws: a
+ * store that cannot be read lets the call through, with a toast, rather than stopping every edit.
+ */
+async function guardStop($: EngineInterface, call: { tool: string }): Promise<string | undefined> {
+  const path = writtenPath(call)
+  if (path === null) return undefined
+  try {
+    const guards = await readGuards($)
+    if (guards.length === 0) return undefined
+    const full = /^([A-Za-z]:|\/)/.test(path) ? path : joinPath(root, path)
+    const hit = coveredBy(guards, full)
+    if (hit !== undefined) return guardReason(hit)
+    // A link or another spelling of a guarded path lands on it all the same.
+    const stat = await $.fs.stat(full, { resolve: true }).catch(() => undefined)
+    const real = stat?.realPath
+    const through = real === undefined ? undefined : coveredBy(guards, real)
+    return through === undefined ? undefined : guardReason(through)
+  } catch (err) {
+    $.ui.log(`filetrail: guards were not read: ${String(err)}`)
+    if (!guardsOffSaid) {
+      guardsOffSaid = true
+      $.ui.toast('filetrail: guards are off, the list could not be read')
+    }
+    return undefined
+  }
 }
 
 /** Files Claude read this session, as they were then: what a later change is measured against. */
@@ -922,6 +980,7 @@ export const register: Register = on => {
     const r = await next(e)
     await $.command.register({ name: 'trail', description: 'Show the filetrail pane (file tree, edit history and helpers); args: agents, replay, export, clear' })
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
+    await readGuards($).then(list => update($, guards, () => list)).catch(err => $.ui.log(`filetrail: guards did not load: ${String(err)}`))
     // A reload forgets the running turn's steps, so a Now row left in state would never be saved.
     await update($, live, () => null)
     // Nor would a stage left acting in state ever be put down: its timer is gone. A turn
@@ -994,9 +1053,31 @@ export const register: Register = on => {
   })
 
   // Record each edit, let it run, then mark how it ended. Recording never blocks or changes the call.
+  // A shell command that names a guarded path is put to the person before it runs. The check reads
+  // the command's words only, so a path it builds itself goes unseen; it only ever tightens a verdict.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    if (verdict.decision === 'deny' || (e.tool !== 'Bash' && e.tool !== 'PowerShell')) return verdict
+    const command = String((e.input as { command?: unknown } | null)?.command ?? '')
+    if (command === '') return verdict
+    try {
+      const guards = await readGuards($)
+      if (guards.length === 0) return verdict
+      const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? ''
+      const hit = mentionedGuard(command, guards, root, home)
+      return hit === undefined ? verdict : { decision: 'ask' as const, reason: `This command names ${normPath(hit)}, which is guarded in filetrail. Run it anyway?` }
+    } catch (err) {
+      $.ui.log(`filetrail: guards were not read for a command: ${String(err)}`)
+      return verdict
+    }
+  }).catch(async (_$, e, next) => (next.called ? undefined : next(e)))
+
   // Reads light up as they start; writes once they went through. A call made in a helper's own
   // loop is counted for it as its result comes back, whichever way the call below goes.
-  on('tool.call', async ($, e, down) => {
+  on('tool.call', async ($, e, engine) => {
+    // A guard stops the call before it runs; the rest of this hook then sees an ordinary refusal (History keeps it).
+    const stop = await guardStop($, e)
+    const down = stop === undefined ? engine : ((async () => ({ deny: stop })) as unknown as typeof engine)
     const next = async (x: typeof e) => {
       const r = await down(x)
       await countHelperCall($, x, r)
@@ -1247,6 +1328,7 @@ export const register: Register = on => {
     if (data.press === true && rowPresses.has(e.element)) { rowPresses.get(e.element)!(); return {} }
     if (data.open === true) { rowOpens.get(e.element)?.(); return {} }
     if (data.reveal === true) { rowReveals.get(e.element)?.(); return {} }
+    if (data.guard === true) { rowGuards.get(e.element)?.(); return {} }
     if (data.copy === true && rowCopies.has(e.element)) { rowCopies.get(e.element)!(data.full === true, e.surface); return {} }
     return next(e)
   })
@@ -1321,6 +1403,7 @@ export const register: Register = on => {
                 }),
                 open: path => fire($, 'opening the file', () => openFile($, path)),
                 showInFolder: (path, isDir) => fire($, 'showing the file in its folder', () => showInFolder($, path, isDir)),
+                guard: path => fire($, 'guarding', () => toggleGuard($, path)),
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
                 toggleTouched: () => fire($, 'listing the touched files', () => update($, files, f => ({ ...f, touchedOpen: !f.touchedOpen }))),
@@ -1367,7 +1450,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale), mates)
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale), mates, await read($, guards))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

@@ -12,7 +12,8 @@ import { badgeColors, NARROW_COLUMNS, NBSP, NNBSP, splitPath } from './paths'
 import { rightSlots } from './columns'
 import type { Cell } from './columns'
 import type { RowProps, Seg } from './row'
-import { modePresses, rowCopies, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
+import { coveredBy } from './guard'
+import { modePresses, rowCopies, rowGuards, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
 import type { ModesProps } from './modes'
 import type { Tool, ToolsProps } from './tools'
 import type { HandleProps } from './handle'
@@ -68,6 +69,8 @@ export type FilesActions = {
   preview: (path: string) => void
   /** Opens the tree down to a file, selects it and scrolls to it. */
   reveal: (path: string) => void
+  /** Guards a file or folder so Claude may not change it, or lets it go. */
+  guard: (path: string) => void
   /** What the preview's buttons do. */
   previewing: PreviewActions
   /** Opens the Agents tab. */
@@ -415,6 +418,8 @@ export function filesView(
   stale: Readonly<Record<string, StaleMark>> = {},
   /** This session's helpers: those at work show as a strip on the card. */
   crew: readonly Helper[] = [],
+  /** The files and folders Claude may not change, as full paths. */
+  guards: readonly string[] = [],
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -462,6 +467,9 @@ export function filesView(
   for (const [path, tone] of Object.entries(flash)) for (const d of foldersTo(root, path) ?? []) if (!litAbove.has(lower(d))) litAbove.set(lower(d), tone)
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
+  // The guard over the selected file: its own (Lift guard) or a folder's above it (named, no button).
+  const selectedGuard = files.selected ? coveredBy(guards, files.selected) : undefined
+  const selectedOwn = selectedGuard !== undefined && files.selected !== null && lower(selectedGuard) === lower(files.selected)
   const tools: (Tool & { run: () => void })[] = [
     { id: 'refresh', glyph: '↻', hint: 'Refresh folders and git', done: 'Refreshed', run: () => actions.refresh() },
     files.hideDots
@@ -519,6 +527,9 @@ export function filesView(
             : null}
           <Button key="open-file" label="Open" plain dimColor onPress={() => actions.open(files.selected!)} />
           <Button key="reveal-file" label="Reveal" plain dimColor onPress={() => actions.showInFolder(files.selected!, false)} />
+          {selectedGuard !== undefined && !selectedOwn
+            ? <Text key="guarded-by" color="error">{`guarded by ${relTo(root, selectedGuard)}`}</Text>
+            : <Button key="guard-file" label={selectedOwn ? 'Lift guard' : 'Guard'} plain dimColor onPress={() => actions.guard(files.selected!)} />}
           <Button key="copy-path" label="Copy path" plain dimColor onPress={press => actions.copy(files.selected!, false, press.surface)} />
           <Button key="copy-full" label="Full path" plain dimColor onPress={press => actions.copy(files.selected!, true, press.surface)} />
           {selectedSteps ? null : <Text dimColor>no edits recorded</Text>}
@@ -575,6 +586,9 @@ export function filesView(
             ...(tone || isSelected ? { b: true } : {}), ...(shimmer ? { sh: TONE_SHIMMER[shimmer] } : {}),
           },
         ]
+        // Guarded, so Claude may not change it: a red ✕ (dimmed on what a guarded folder holds).
+        const held = coveredBy(guards, entry.path)
+        if (held !== undefined) segs.push({ t: `${NNBSP}✕`, c: 'error', ...(lower(held) === lower(entry.path) ? {} : { dim: true }) })
         // Read by Claude and changed since: a Δ and what changed it.
         if (!isDir && stale[lower(entry.path)]) segs.push({ t: `${NNBSP}${STALE_MARK} ${staleLabel(stale[lower(entry.path)]!.by)}`, c: FLAG_COLOR })
         if (tone) segs.push({ t: `${NNBSP}· ${TONE_WORD[tone]}`, c: TONE_COLOR[tone], b: true, sh: TONE_SHIMMER[tone] })
@@ -589,6 +603,7 @@ export function filesView(
           if (!isDir) rowOpens.set(key, () => actions.preview(entry.path))
           rowCopies.set(key, (full, surface) => actions.copy(entry.path, full, surface))
           rowReveals.set(key, () => actions.showInFolder(entry.path, isDir))
+          rowGuards.set(key, () => actions.guard(entry.path))
           // As wide as the pane, so the row knows its room and fits itself (it never wraps).
           // Monospace, as filetree's terminal rows are: the columns line up. The last columns stay
           // free for the pane's scrollbar.
