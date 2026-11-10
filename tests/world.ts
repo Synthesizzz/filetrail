@@ -32,12 +32,18 @@ export type WorldOptions = {
   refuse?: string[]
   /** Picture files by path, as the base64 `fs.read(path, { as: 'bytes' })` answers. */
   images?: Record<string, string>
+  /** The engine's agent list as `$.agent.list()` answers it; a test can change the array it gets back as it goes. */
+  agents?: { id: string; type: string; description: string; status: string }[]
 }
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [] }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [], agents = [] }: WorldOptions = {}) {
   mock.env(on, env)
+  // A subagent starts: the engine answers its id, as it did on a real one (`ag1`, `ag2`, ...).
+  let spawned = 0
+  on('agent.spawn', (_$: any, e: any) => (String(e.description).includes('--refuse') ? { deny: 'No helpers here.' } : { model: 'claude-sonnet-5-5', agentId: `ag${++spawned}` }))
+  on('agent.list', () => ({ value: agents }))
   // The engine makes a written path absolute for this machine before the hook sees it
   // ('/home/x' arrives as 'C:\home\x' on Windows): kept here with forward slashes.
   const writes: Record<string, string> = {}
@@ -132,7 +138,7 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     copies.push({ text: e.text, surface: e.surface })
     return { value: { isCopied: true } }
   })
-  return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes, copies, listed }
+  return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes, copies, listed, agents }
 }
 
 /** Text with the non-breaking spaces the mod draws (indents, diff lines, narrow ones in a row) read as plain ones. */

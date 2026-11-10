@@ -1,4 +1,4 @@
-export type Tab = 'files' | 'history'
+export type Tab = 'files' | 'history' | 'agents'
 
 export type DiffLine = { op: ' ' | '+' | '-' | '~'; t: string }
 
@@ -140,6 +140,25 @@ export type TestRun = { command: string; ok: boolean; at: number; ms: number; sc
 /** The session's test runs: the last, and the last per-file and full ones. */
 export type TestRuns = { last: TestRun; file?: TestRun; full?: TestRun }
 
+/** A file a helper read or wrote: absolute path, forward slashes. A write outranks a read of the same file. */
+export type HelperFile = { path: string; tone: 'read' | 'write' }
+
+/**
+ * A helper (a subagent) of this session: its engine id, the type it was spawned as, the task
+ * it was given, how it stands, when it started and ended, how many tools it called, and the
+ * files it read or wrote (read from the engine's own events; a command's effects are not here).
+ */
+export type Helper = {
+  id: string
+  type: string
+  description: string
+  state: 'running' | 'done' | 'failed'
+  startedAt: number
+  endedAt: number | null
+  calls: number
+  files: HelperFile[]
+}
+
 /** What changed a file Claude had read: its own edit, a commit holding the file, or a change from outside the session. */
 export type StaleBy = 'edit' | 'commit' | 'outside'
 
@@ -224,6 +243,8 @@ declare module 'claude-code' {
       tests: TestRuns | null
       /** Files Claude read that changed since (lower-cased paths): marked in the tree and the touched list. */
       stale: Record<string, StaleMark>
+      /** This session's helpers (subagents), oldest first; empty until one starts. A reload forgets them. */
+      helpers: Helper[]
     }
   }
 }

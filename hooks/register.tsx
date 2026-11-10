@@ -3,10 +3,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, StaleBy, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Helper, Hint, Stage, HistoryView, Preview, SearchIndex, StaleBy, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
+import { called, finished, joined, reconciled, resumed } from './helpers'
 import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
 import { blockedOf, callText } from './blocked'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
@@ -64,6 +65,8 @@ const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as Tou
 const ignored = atom({ plugin: 'filetrail', key: 'ignored' } as const, [] as string[])
 const tests = atom({ plugin: 'filetrail', key: 'tests' } as const, null as TestRuns | null)
 const stale = atom({ plugin: 'filetrail', key: 'stale' } as const, {} as Record<string, StaleMark>)
+/** The session's helpers (subagents), for the Agents tab and the card's strip. (`helpers` below counts those at work, for the crab.) */
+const crew = atom({ plugin: 'filetrail', key: 'helpers' } as const, [] as Helper[])
 /** Kept in the session's state, so a reload starts from the head measured before. */
 /** Files the Claude touched list keeps. */
 const MAX_TOUCHED = TOUCHED_MAX
@@ -873,6 +876,30 @@ async function loadImage($: EngineInterface, path: string, kind: ImageKind): Pro
 }
 
 /** The preview reads its file again after Claude changed it, on the same page. */
+/**
+ * A call made in a helper's own loop (it carries the helper's id): counted for that helper,
+ * and the file it read or wrote kept once the call went through. The main loop's calls carry no id.
+ */
+async function countHelperCall($: EngineInterface, e: unknown, result: unknown): Promise<void> {
+  const by = (e as { agentId?: unknown }).agentId
+  if (typeof by !== 'string') return
+  try {
+    const target = outcomeOf(result) === 'ok' ? targetOf(e as { tool: string }) : null
+    const file = target && target.follow && (target.tone === 'read' || target.tone === 'write') ? { path: target.path, tone: target.tone } : null
+    const at = await $.clock.now()
+    await update($, crew, l => called(l, by, at, file))
+  } catch (err) {
+    $.ui.log(`filetrail: a helper's call was not counted: ${String(err)}`)
+  }
+}
+
+/** Sets the helpers against the engine's own list: those that started before a reload join, and ones it says are over close. */
+async function syncHelpers($: EngineInterface): Promise<void> {
+  const listed = await $.agent.list()
+  const at = await $.clock.now()
+  await update($, crew,l => reconciled(l, listed.map(a => ({ id: a.id, type: a.type, description: a.description, status: a.status })), at))
+}
+
 async function refreshPreview($: EngineInterface, path: string): Promise<void> {
   const cur = await read($, preview)
   if (cur && lower(cur.path) === lower(path)) await loadPreview($, cur.path, cur.page)
@@ -889,6 +916,9 @@ export const register: Register = on => {
     // left running is over too.
     await update($, stage, () => null)
     await update($, working, () => false)
+    // Helpers are read again from the engine: ones that started before a reload are still its own.
+    await update($, crew,() => [])
+    await syncHelpers($).catch(err => $.ui.log(`filetrail: helpers were not read: ${String(err)}`))
     // The tree's view as left in an earlier session.
     const mode = await $.store.get(MODE_KEY)
     if (mode === 'now' || mode === 'all') await update($, files, f => ({ ...f, mode: mode as TreeMode }))
@@ -911,6 +941,10 @@ export const register: Register = on => {
       await update($, working, () => true)
       // A new turn: the Now tree starts empty (the last turn's stayed on show until now).
       await update($, turnFiles, () => [])
+    } else {
+      // A helper sent more to do works again.
+      const id = e.agentId
+      await update($, crew,l => resumed(l, id)).catch(err => $.ui.log(`filetrail: a helper was not marked: ${String(err)}`))
     }
     return next(e)
   }).catch(async ($, e, next) => {
@@ -918,9 +952,30 @@ export const register: Register = on => {
     return next.called ? undefined : next(e)
   })
 
+  // A helper starts: it joins the list the Agents tab and the card's strip draw.
+  on('agent.spawn', async ($, e, next) => {
+    const started = await next(e)
+    if (started.deny === undefined && started.agentId) {
+      const id = started.agentId
+      const at = await $.clock.now()
+      const task = e.description || firstLine(e.prompt, 60)
+      await update($, crew,l => joined(l, { id, type: e.subagentType || 'subagent', description: task }, at)).catch(err => $.ui.log(`filetrail: a helper was not listed: ${String(err)}`))
+    }
+    return started
+  }).catch(async ($, e, next) => {
+    $.ui.log(`filetrail: agent.spawn failed: ${String(next.error)}`)
+    return next.called ? undefined : next(e)
+  })
+
   // Record each edit, let it run, then mark how it ended. Recording never blocks or changes the call.
-  // Reads light up as they start; writes once they went through.
-  on('tool.call', async ($, e, next) => {
+  // Reads light up as they start; writes once they went through. A call made in a helper's own
+  // loop is counted for it as its result comes back, whichever way the call below goes.
+  on('tool.call', async ($, e, down) => {
+    const next = async (x: typeof e) => {
+      const r = await down(x)
+      await countHelperCall($, x, r)
+      return r
+    }
     let target: Target | null = null
     try { target = targetOf(e as unknown as { tool: string }) } catch { /* nothing to light */ }
     if (target && target.tone === 'read') await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
@@ -1026,7 +1081,12 @@ export const register: Register = on => {
   // A main-loop turn that changed files joins the history; subagent edits ride in it.
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    if (e.agentId !== undefined) return r
+    if (e.agentId !== undefined) {
+      const id = e.agentId
+      const at = await $.clock.now()
+      await update($, crew,l => finished(l, id, at, e.reason === 'answer')).catch(err => $.ui.log(`filetrail: a helper was not closed: ${String(err)}`))
+      return r
+    }
     const turn = pending
     pending = null
     await update($, working, () => false)
