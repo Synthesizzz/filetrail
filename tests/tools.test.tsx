@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Tool } from '../hooks/tools'
-import { CELL, toolAt } from '../hooks/tools'
+import { CELL, FLASH_FRAMES, FLASH_TICK_MS, SPIN, toolAt } from '../hooks/tools'
 import { PANE, START, pressRow, rowText, textOf, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
@@ -140,5 +140,24 @@ test('hovering an icon says what it does; a click on it runs it', async ($, on) 
   await ui.pointer({ type: 'down', x: 34, y: 0, button: 'left', in: 'tree-tools' })
   await clock.settle()
   expect(await ui.find({ key: rowKey('C:/work/demo/.env') })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a click on an icon answers at once: the icon flashes (refresh spins), what was done shows in green, then goes', async ($, on) => {
+  const { clock } = world(on, { dirs: DIRS })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await ui.resize({ columns: 40, rows: 1, in: 'tree-tools' })
+  // Refresh is at column 31.
+  await ui.pointer({ type: 'down', x: 31, y: 0, button: 'left', in: 'tree-tools' })
+  const now = textOf(await ui.drawn({ in: 'tree-tools' }))
+  expect(now).toMatch(/^✓ Refreshed/)
+  expect(SPIN.some(g => now.includes(g))).toBe(true)
+  await ui.advance(FLASH_TICK_MS * (FLASH_FRAMES + 2))
+  expect(textOf(await ui.drawn({ in: 'tree-tools' }))).not.toMatch(/Refreshed/)
+  // The dots icon says which way it went.
+  await ui.pointer({ type: 'down', x: 34, y: 0, button: 'left', in: 'tree-tools' })
+  expect(textOf(await ui.drawn({ in: 'tree-tools' }))).toMatch(/^✓ Dotfiles hidden/)
   await ui.unmount()
 })

@@ -3,7 +3,9 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { DiffLine, HistoryView, Step, Turn } from '../types'
+import type { Blocked, DiffLine, HistoryView, Step, Turn } from '../types'
+import { KIND_LABEL } from './blocked'
+import { EDIT_TOOLS } from './history'
 import { TONE_SHIMMER } from './files-view'
 import { clip, clockOf, dayLabel, formatAt, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS } from './paths'
 
@@ -50,10 +52,18 @@ export function filesText(turn: Turn): string {
   return names.length <= NAMED_FILES ? names.join(' · ') : `${names.length} files`
 }
 
+/** Calls of a turn that were blocked, an Edit apart: a refused Edit is already counted as not applied. */
+export function blockedCount(turn: Turn): number {
+  return (turn.blocked ?? []).filter(b => !EDIT_TOOLS.has(b.tool)).length
+}
+
 export function summaryText(turn: Turn): string {
   const s = summarize(turn)
+  const n = blockedCount(turn)
+  if (!turn.steps.length && n) return `no file edits · ${n} blocked`
   const parts = [filesText(turn), `${s.edits} edit${s.edits === 1 ? '' : 's'}`, `+${s.add} -${s.del}`]
   if (s.problems) parts.push(`${s.problems} not applied`)
+  if (n) parts.push(`${n} blocked`)
   return parts.join(' · ')
 }
 
@@ -69,7 +79,8 @@ export function withoutIgnored(turns: readonly Turn[], ignored: readonly string[
   const kept: Turn[] = []
   for (const t of turns) {
     const steps = t.steps.filter(s => !skip.has(s.path.toLowerCase()))
-    if (!steps.length) { hidden++; continue }
+    // A turn left with blocked calls alone is still worth a line: a refused call is not a file.
+    if (!steps.length && !t.blocked?.length) { hidden++; continue }
     kept.push(steps.length === t.steps.length ? t : { ...t, steps })
   }
   return { turns: kept, hidden }
@@ -184,6 +195,16 @@ export function titleSegs(turn: Turn, now: number, liveId: string | null, select
 function summaryLine(els: Els, turn: Turn, isLive: boolean) {
   const { Text } = els
   const s = summarize(turn)
+  const n = blockedCount(turn)
+  if (!turn.steps.length && n) {
+    return (
+      <Text wrap="wrap">
+        {isLive ? <Text color="claude">working · </Text> : null}
+        <Text dimColor>no file edits · </Text>
+        <Text color="warning">{`${n} blocked`}</Text>
+      </Text>
+    )
+  }
   return (
     <Text wrap="wrap">
       {isLive ? <Text color="claude">working · </Text> : null}
@@ -192,6 +213,7 @@ function summaryLine(els: Els, turn: Turn, isLive: boolean) {
       <Text dimColor> </Text>
       <Text color="error">{`-${s.del}`}</Text>
       {s.problems ? <Text color="warning">{` · ${s.problems} not applied`}</Text> : null}
+      {n ? <Text color="warning">{` · ${n} blocked`}</Text> : null}
     </Text>
   )
 }
@@ -248,6 +270,26 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
   )
 }
 
+/** A turn's blocked calls, one line each: who stopped it, the tool, what it named, why. */
+function blockedSection(els: Els, turn: Turn) {
+  const { Box, Text } = els
+  const list: readonly Blocked[] = turn.blocked ?? []
+  if (!list.length) return null
+  return (
+    <Box key="blocked" flexDirection="column" marginTop={1}>
+      <Text size="caption" weight="semibold" dimColor>{`BLOCKED · ${list.length}`}</Text>
+      {list.map(b => (
+        <Text key={`blocked-${b.id}`} wrap="wrap">
+          <Text color={b.kind === 'failed' ? 'warning' : 'error'}>{KIND_LABEL[b.kind]}</Text>
+          <Text weight="semibold">{` ${b.tool}`}</Text>
+          {b.call ? <Text mono dimColor>{` ${b.call}`}</Text> : null}
+          {b.reason ? <Text dimColor>{` · ${b.reason}`}</Text> : null}
+        </Text>
+      ))}
+    </Box>
+  )
+}
+
 function stepper(
   els: Els, turns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, layout: Layout,
   liveId: string | null,
@@ -255,6 +297,21 @@ function stepper(
   const { Box, Text, Button } = els
   const { set } = actions
   const steps = stepsOf(turns, view)
+  const only = !steps.length && view.file === null ? turns.find(t => t.id === view.turn) : undefined
+  if (only?.blocked?.length) {
+    // A turn with no file edits: its blocked calls are all there is to show.
+    return (
+      <Box key="stepper-blocked" flexDirection="column">
+        <Box key="nav-top" flexDirection="row" flexWrap="wrap" gap={1}>
+          {!layout.wide && <Button key="back" label="◀ Timeline" hotkey="b" dimColor onPress={() => set(TIMELINE)} />}
+          <Button key="close" label="Close" hotkey="c" role="dismiss" dimColor onPress={() => actions.close()} />
+        </Box>
+        <Text weight="semibold" wrap="wrap">{clip(turnTitle(only, now, liveId), Math.max(24, layout.width * 2 - 4))}</Text>
+        <Text dimColor>No file edits in this turn.</Text>
+        {blockedSection(els, only)}
+      </Box>
+    )
+  }
   if (!steps.length) {
     return layout.wide
       ? <Text key="stepper-empty" dimColor>No edits in this turn.</Text>
@@ -314,6 +371,7 @@ function stepper(
         <Button key="next" label="Next ▶" hotkey="n" autoFocus onPress={() => go(k + 1)} />
         <Button key="ask" label="Ask Claude" hotkey="a" dimColor onPress={() => actions.ask(step, turn)} />
       </Box>
+      {view.file === null ? blockedSection(els, turn) : null}
     </Box>
   )
 }

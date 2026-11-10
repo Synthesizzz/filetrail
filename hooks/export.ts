@@ -2,6 +2,7 @@
 // project's whole history as Markdown. No engine calls here.
 
 import type { DiffLine, Step, Turn } from '../types'
+import { blockedLine } from './blocked'
 import { normPath } from './history'
 
 /** Diff lines quoted into the prompt at most; the rest are counted. */
@@ -65,6 +66,7 @@ export function historyMarkdown(root: string, turns: readonly Turn[], now: numbe
     for (const step of turn.steps) {
       out.push('', `### ${step.rel}${step.line !== null ? ` (line ${step.line})` : ''}`, '', stepLine(step), '', ...diffBlock(step.diff))
     }
+    if (turn.blocked?.length) out.push('', '### Blocked calls', '', ...turn.blocked.map(b => `- ${blockedLine(b)}`))
   }
   return out.join('\n') + '\n'
 }

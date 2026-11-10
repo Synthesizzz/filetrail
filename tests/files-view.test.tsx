@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Turn } from '../types'
-import { FOLDER_COLOR, GIT_HEX, SELECTED_BG } from '../hooks/files-view'
-import { DONE, KEY, PANE, START, hasText, pressRow, rowRuns, rowText, textOf, world } from './world'
+import { FOLDER_COLOR, folderColor, GIT_HEX, SELECTED_BG, typeColor } from '../hooks/files-view'
+import { DONE, KEY, PANE, START, hasRow, hasText, pressRow, rowRuns, rowText, textOf, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
   'C:\\work\\demo': [['src', 'dir'], ['.git', 'dir'], ['README.md', 'file'], ['tmp', 'dir']],
@@ -57,10 +57,13 @@ test('Files: the root listing, git status, line counts and edit badges', { timeo
 
   // Opening it lists it and shows each file's status, counts and edits.
   await pressRow(ui, rowKey('C:/work/demo/src'))
-  expect(await rowText(ui, rowKey('C:/work/demo/src/a.ts'))).toMatch(/^\s+· a\.ts ●2 \+3 -1 M$/)
-  expect(await rowText(ui, rowKey('C:/work/demo/src/new.ts'))).toMatch(/^\s+· new\.ts U$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src/a.ts'))).toMatch(/^\s+• a\.ts ●2 \+3 -1 M$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src/new.ts'))).toMatch(/^\s+• new\.ts U$/)
   const newTs = await rowRuns(ui, rowKey('C:/work/demo/src/new.ts'))
   expect(newTs.find(r => r.text === ' U')?.props.color).toBe(GIT_HEX.added)
+  // The marker takes the file type's colour; the name keeps git's.
+  expect(newTs.find(r => r.text.startsWith('•'))?.props.color).toBe(typeColor('new.ts'))
+  expect(newTs.find(r => r.text === 'new.ts')?.props.color).toBe(GIT_HEX.added)
   expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▾ ■ src\/ \+3 -1 \?:1 M:1$/)
   // The indent is non-breaking: the desktop collapses leading plain spaces (seen live: every row flush left);
   // a narrow one follows it, before the icon.
@@ -92,12 +95,12 @@ test('a Write lists its folder again, so the new file shows', async ($, on) => {
   await clock.advance(1000)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await pressRow(ui, rowKey('C:/work/demo/src'))
-  expect(await ui.find({ key: rowKey('C:/work/demo/src/b.ts') })).toBeUndefined()
+  expect(await hasRow(ui, rowKey('C:/work/demo/src/b.ts'))).toBe(false)
 
   await $.turn.start({ text: 'add b', turnId: 't1' })
   dirs['C:/work/demo/src']!.push(['b.ts', 'file'])
   await $.tool.call({ tool: 'Write', file_path: 'C:\\work\\demo\\src\\b.ts', content: 'b\n' })
-  expect(await ui.find({ key: rowKey('C:/work/demo/src/b.ts') })).toBeDefined()
+  expect(await hasRow(ui, rowKey('C:/work/demo/src/b.ts'))).toBe(true)
   await ui.unmount()
 })
 
@@ -125,7 +128,7 @@ test('a file row can be selected, with a marker every surface shows', async ($, 
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await pressRow(ui, rowKey('C:/work/demo/README.md'))
   // The desktop draws no inverse: a Client row is filled and bold instead (a Button row gets a ›).
-  expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toBe('  · README.md')
+  expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toBe('  • README.md')
   expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ ■ src\//)
   // Its name is bold, its row filled, and the line under the header names it.
   const name = (await rowRuns(ui, rowKey('C:/work/demo/README.md'))).find(r => r.text === 'README.md')
@@ -145,5 +148,33 @@ test('a count of zero is left out: lines only added show +N without -0', async (
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/src\/ \+2 M:1$/)
   expect(await ui.find({ type: 'Text', text: '+2 M:1' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('typeColor: a colour per file type, by extension and ignoring case; none for the rest', () => {
+  expect(typeColor('C:/w/app.ts')).toBe(typeColor('C:/w/View.TSX'))
+  expect(typeColor('C:/w/app.ts')).not.toBe(typeColor('C:/w/app.js'))
+  for (const p of ['a.py', 'README.md', 'package.json', 'ci.yml', 'site.css', 'index.html', 'q.sql', 'lab.ipynb']) expect([p, typeof typeColor(p)]).toEqual([p, 'string'])
+  for (const p of ['Makefile', 'logo.png', '.env']) expect([p, typeColor(p)]).toEqual([p, undefined])
+})
+
+test('a folder\'s marker takes its place among its siblings\' colour, so neighbours differ; its name keeps git\'s', async ($, on) => {
+  expect(folderColor(0)).toBe(FOLDER_COLOR)
+  expect(folderColor(1)).not.toBe(folderColor(0))
+  expect(folderColor(5)).toBe(folderColor(0))
+  const { clock } = world(on, { dirs: { 'C:/work/demo': [['docs', 'dir'], ['src', 'dir'], ['a.md', 'file']], 'C:/work/demo/src': [['deep', 'dir']], 'C:/work/demo/src/deep': [['x.ts', 'file']] } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await pressRow(ui, rowKey('C:/work/demo/src'))
+  const marker = async (path: string) => (await rowRuns(ui, rowKey(path))).find(r => r.text.startsWith('■'))?.props.color
+  expect(await marker('C:/work/demo/docs')).toBe(folderColor(0))
+  expect(await marker('C:/work/demo/src')).toBe(folderColor(1))
+  // The first folder inside src: the first colour again.
+  expect(await marker('C:/work/demo/src/deep')).toBe(folderColor(0))
+  // With nothing for git to say, a folder's name takes its marker's colour too.
+  const name = async (path: string, text: string) => (await rowRuns(ui, rowKey(path))).find(r => r.text === text)?.props.color
+  expect(await name('C:/work/demo/src', 'src/')).toBe(folderColor(1))
+  expect(await name('C:/work/demo/docs', 'docs/')).toBe(folderColor(0))
   await ui.unmount()
 })

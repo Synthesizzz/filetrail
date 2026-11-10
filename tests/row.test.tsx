@@ -59,9 +59,9 @@ test('a narrow row fits its region: the Client is as wide as the pane and cuts i
   await ui.resize({ columns: 20, rows: 1, in: key })
   const line = await rowText(ui, key)
   expect([...line].length).toBeLessThanOrEqual(20)
-  expect(line).toMatch(/^ {2}· a-rather-long-f…$/)
+  expect(line).toMatch(/^ {2}• a-rather-long-f…$/)
   await ui.resize({ columns: 80, rows: 1, in: key })
-  expect(await rowText(ui, key)).toBe('  · a-rather-long-file-name-for-a-narrow-dock.tsx')
+  expect(await rowText(ui, key)).toBe('  • a-rather-long-file-name-for-a-narrow-dock.tsx')
   await ui.unmount()
 })
 
@@ -90,4 +90,12 @@ test('fitRow drops a folder marked opt before cutting the name, keeping the pill
   const row: Seg[] = [{ t: ' MD ' }, { t: ' notes.md', name: true }, { t: ' trail-demo/deep', opt: true }, { t: ' Reading ', right: true }]
   expect(fitRow(row, 40).map(s => s.t)).toEqual([' MD ', ' notes.md', ' trail-demo/deep', ' Reading '])
   expect(fitRow(row, 24).map(s => s.t)).toEqual([' MD ', ' notes.md', ' Reading '])
+})
+
+test('fitRow cuts a name marked ext in its middle, so the extension stays whole', () => {
+  const row: Seg[] = [{ t: ' TS ' }, { t: ' files-view-helpers.tsx', name: true, ext: true }, { t: ' Edited ', right: true }]
+  expect(fitRow(row, 26).map(s => s.t)).toEqual([' TS ', ' files-vi….tsx', ' Edited '])
+  // No extension to keep (a dotfile, a bare name): cut at the end as before.
+  const bare: Seg[] = [{ t: ' ' }, { t: ' .gitignore-local', name: true, ext: true }, { t: ' Edited ', right: true }]
+  expect(fitRow(bare, 18).map(s => s.t)).toEqual([' ', ' .gitign…', ' Edited '])
 })

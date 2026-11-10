@@ -82,6 +82,22 @@ test('outcomeOf reads deny and isError', () => {
 
 const turn = (id: string, size = 0): Turn => ({ id, at: 0, prompt: 'x'.repeat(size), steps: [] })
 
+test('addTurn: turns of blocked calls alone have a cap of their own and never push an edit turn out', () => {
+  const edit = (id: string): Turn => ({ id, at: 1, prompt: '', steps: [{ id, path: 'C:/p/a.ts', rel: 'a.ts', tool: 'Edit', note: '', status: 'ok', line: 1, add: 1, del: 0, diff: [], at: 1 }] })
+  const blocked = (id: string): Turn => ({ id, at: 1, prompt: '', steps: [], blocked: [{ id: `${id}.b`, tool: 'Bash', call: 'x', reason: '', kind: 'hook', at: 1 }] })
+  let turns: Turn[] = []
+  for (let k = 0; k < 50; k++) turns = addTurn(turns, edit(`e${k}`))
+  for (let k = 0; k < 15; k++) turns = addTurn(turns, blocked(`b${k}`))
+  // All 50 edit turns are still there; the blocked-only ones are the newest 10.
+  expect(turns.filter(t => t.steps.length).length).toBe(50)
+  expect(turns.filter(t => !t.steps.length).map(t => t.id)).toEqual(Array.from({ length: 10 }, (_, i) => `b${i + 5}`))
+  // One more edit turn drops the oldest edit turn, not a blocked one.
+  turns = addTurn(turns, edit('e50'))
+  expect(turns.filter(t => t.steps.length).length).toBe(50)
+  expect(turns.some(t => t.id === 'e0')).toBe(false)
+  expect(turns.filter(t => !t.steps.length).length).toBe(10)
+})
+
 test('addTurn keeps the newest turns and replaces a turn with the same id', () => {
   let turns: Turn[] = []
   for (let k = 0; k < 55; k++) turns = addTurn(turns, turn(`t${k}`))

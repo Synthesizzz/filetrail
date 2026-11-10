@@ -12,7 +12,7 @@ export const KEY = 'p:c:/work/demo'
 export const DONE = { durationMs: 1, isAborted: false, reason: 'answer', text: '', answer: '' } as const
 
 /** What `git` answers: the repo's top, `status --porcelain=v1 -b -z` and `diff --numstat HEAD`. */
-export type GitWorld = { top: string; status: string; numstat: string; lsFiles?: string; show?: string; ignored?: string }
+export type GitWorld = { top: string; status: string; numstat: string; lsFiles?: string; show?: string; ignored?: string; head?: string; log?: string }
 
 export type WorldOptions = {
   files?: Record<string, string>
@@ -26,11 +26,17 @@ export type WorldOptions = {
   env?: Record<string, string>
   /** Runs as a Bash command does, before it answers: a test deletes files here. */
   onBash?: (command: string) => void
+  /** Reads of a path ending in one of these fail, as a file over the read limit does. */
+  unreadable?: string[]
+  /** Calls on a path ending in one of these are refused by a hook; a test can add to it as it goes. */
+  refuse?: string[]
+  /** Picture files by path, as the base64 `fs.read(path, { as: 'bytes' })` answers. */
+  images?: Record<string, string>
 }
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [] }: WorldOptions = {}) {
   mock.env(on, env)
   // The engine makes a written path absolute for this machine before the hook sees it
   // ('/home/x' arrives as 'C:\home\x' on Windows): kept here with forward slashes.
@@ -63,13 +69,22 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
   on('ui.open', (_$: any, e: any) => { opens.push(e); return { value: { isPlaced: true } } })
   const closes: unknown[] = []
   on('ui.close', (_$: any, e: any) => { closes.push(e); return { value: undefined } })
-  on('fs.exists', (_$: any, e: any) => ({ value: e.path in files }))
-  on('fs.read', (_$: any, e: any) => ({ value: files[e.path] }))
+  on('fs.exists', (_$: any, e: any) => ({ value: e.path in files || e.path in images }))
+  on('fs.read', (_$: any, e: any) => {
+    if (unreadable.some(end => String(e.path).endsWith(end))) throw new Error('file is larger than 4 MiB')
+    if (e.as === 'bytes') return { value: { base64: images[e.path] } }
+    return { value: files[e.path] }
+  })
   on('tool.call', (_$: any, e: any) => {
     if (String(e.file_path).endsWith('denied.ts')) return { deny: 'The user refused this edit.' }
+    if (e.file_path && refuse.some(end => String(e.file_path).endsWith(end))) return { deny: 'Not now: a hook refused this.' }
     if (String(e.file_path).endsWith('broken.ts')) return { result: 'old_string not found', isError: true }
     // A Bash command with "--fail" in it ends with an error, as a non-zero exit does.
     if (e.tool === 'Bash' && String(e.command).includes('--fail')) return { result: 'exit 1', isError: true }
+    // A hook refusing a command answers with a deny; Claude Code's own refusal and a tool failing come as errors.
+    if (e.tool === 'Bash' && String(e.command).includes('--hook-says-no')) return { deny: 'Not now: the build is frozen.' }
+    if (e.tool === 'Bash' && String(e.command).includes('--permission-says-no')) return { result: 'x', isError: true, text: "The user doesn't want to proceed with this tool use. The tool use was rejected." }
+    if (e.tool === 'Read' && String(e.file_path).endsWith('missing.md')) return { result: 'File does not exist.', isError: true }
     if (e.tool === 'Bash') onBash?.(String(e.command))
     return { result: 'ok' }
   })
@@ -90,9 +105,11 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     if (argv[0] === 'uname') return out('Linux\n')
     if (argv[0] !== 'git') return out('')
     if (!git) return out('', 128)
-    if (argv[1] === 'rev-parse') return out(`${git.top}\n`)
+    // `rev-parse HEAD` answers the commit a test sets; any other rev-parse is the repo's top.
+    if (argv[1] === 'rev-parse') return out(argv[2] === 'HEAD' ? `${git.head ?? 'h0'}\n` : `${git.top}\n`)
     if (argv[1] === 'status') return out(git.status)
-    if (argv[1] === 'diff') return out(git.numstat)
+    // `git diff --name-only <from>..HEAD` answers the files a test says a commit held; any other diff is the numstat.
+    if (argv[1] === 'diff') return out(argv.includes('--name-only') ? git.log ?? '' : git.numstat)
     if (argv[1] === 'ls-files') return out(git.lsFiles ?? '')
     if (argv[1] === 'show') return out(git.show ?? '')
     // check-ignore names the paths it was given that git ignores: exit 1 when none is.
@@ -122,7 +139,23 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
 export const plain = (text: string | undefined) => (text ?? '').replace(/[\u00a0\u202f]/g, ' ')
 
 /** The text of the element drawn under `key`, spaces plain; '' when it is not drawn. */
+/**
+ * A row's key as drawn: a shimmering tree row is a fresh instance keyed `row-…~<tone>`
+ * (its clock can only start as it first draws), so a row is found by its plain key or that.
+ */
+export async function rowKeyOf(ui: any, key: string): Promise<string> {
+  if (await ui.find({ key })) return key
+  const lit = (await ui.findAll({ type: 'Client' })).find((c: any) => String(c.key).startsWith(`${key}~`))
+  return lit ? String(lit.key) : key
+}
+
+/** Whether a row is drawn, lit or not. */
+export async function hasRow(ui: any, key: string): Promise<boolean> {
+  return (await ui.find({ key: await rowKeyOf(ui, key) })) !== undefined
+}
+
 export async function rowText(ui: any, key: string): Promise<string> {
+  key = await rowKeyOf(ui, key)
   const el = await ui.find({ key })
   if (el?.type === 'Client') return plain(textOf(await ui.drawn({ in: key })))
   return plain(el?.text)
@@ -138,6 +171,7 @@ export function textOf(node: any): string {
 
 /** The Text runs a row's Client drew, with their props: colours and styles under test. */
 export async function rowRuns(ui: any, key: string): Promise<{ text: string; props: any }[]> {
+  key = await rowKeyOf(ui, key)
   const out: { text: string; props: any }[] = []
   const walk = (n: any) => {
     if (n == null || typeof n !== 'object') return
@@ -170,5 +204,5 @@ export const PANE = {
 
 /** Presses a tree row as its Client does: a post from that row's instance. */
 export async function pressRow(ui: any, key: string): Promise<void> {
-  await ui.post({ press: true }, { in: key })
+  await ui.post({ press: true }, { in: await rowKeyOf(ui, key) })
 }

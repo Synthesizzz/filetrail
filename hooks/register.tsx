@@ -3,30 +3,37 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeletedBy, Entry, FilesView, GitActionEntry, GitInfo, GitStage, Hint, HistoryView, Preview, SearchIndex, Step, StepStatus, Tab, Tone, TouchedFile, Turn } from '../types'
-import { BROWSE_MS, FLASH_MS, GLIDE_MS, HOLD_MS, clampTop, foldersTo, glide, targetOf, topFor, treeLines, treeRows, treeWindow } from './activity'
+import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Hint, Stage, HistoryView, Preview, SearchIndex, StaleBy, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
-import { deleteTargets, isCommit, readTargets } from './bash'
+import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
+import { blockedOf, callText } from './blocked'
+import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
+import type { Snapshot } from './shell-change'
+import { dimensionsOf, imageKind, imageSvg, MAX_DRAW_BYTES } from './image'
+import type { ImageKind } from './image'
+import { checksum, judgeStale, remember, staleLabel } from './stale'
+import type { ReadRecord } from './stale'
+import { addRun, testScope } from './test-runs'
 import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
-import { filesView, MAX_ROWS } from './files-view'
-import { spelled } from './now-card'
+import { filesView, TOUCHED_MAX } from './files-view'
 import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import { NO_SVG } from './octicons'
-import { pageOf, pageText, PAGE_LINES, refusal } from './preview'
+import { isMarkdown, pageOf, pageText, PAGE_LINES, refusal } from './preview'
 import {
-  addTurn, byteSize, BUDGET_BYTES, deleteStep, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
+  addTurn, byteSize, BUDGET_BYTES, changeStep, deleteStep, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
   isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
 } from './history'
 import type { EditCall, StoreIndex } from './history'
 import { historyView, TIMELINE } from './history-view'
 import { MAX_INDEX_FILES, parseLsFiles, SKIP_DIRS } from './search'
-import { joinPath, lower, parentOf, toEntries, visibleRows } from './tree'
+import { joinPath, lower, parentOf, toEntries } from './tree'
 
 export const PANE = 'filetrail'
 
@@ -37,20 +44,29 @@ const listing = atom({ plugin: 'filetrail', key: 'listing' } as const, {} as Rec
 const git = atom({ plugin: 'filetrail', key: 'git' } as const, null as GitInfo | null)
 const files = atom({ plugin: 'filetrail', key: 'files' } as const, { expanded: [], selected: null } as FilesView)
 const flash = atom({ plugin: 'filetrail', key: 'flash' } as const, {} as Record<string, Tone>)
-const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone } | null)
+const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone; at?: number } | null)
 const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | null)
 const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | null)
 const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as SearchIndex | null)
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
-const stage = atom({ plugin: 'filetrail', key: 'stage' } as const, null as GitStage | null)
+const stage = atom({ plugin: 'filetrail', key: 'stage' } as const, null as Stage | null)
+const working = atom({ plugin: 'filetrail', key: 'working' } as const, false)
+const turnFiles = atom({ plugin: 'filetrail', key: 'turnFiles' } as const, [] as string[])
+/** The tree's view, kept for the next session. */
+const MODE_KEY = 'filetrail:treeMode'
+/** The touched files the card shows, as its handle left it, kept for the next session. */
+const ROWS_KEY = 'filetrail:touchedRows'
+/** This turn's files kept at most, for the Now tree. */
+const MAX_TURN_FILES = 100
 const preview = atom({ plugin: 'filetrail', key: 'preview' } as const, null as Preview | null)
 const touched = atom({ plugin: 'filetrail', key: 'touched' } as const, [] as TouchedFile[])
 /** The files of the history git ignores (lower-cased): History leaves them out. */
 const ignored = atom({ plugin: 'filetrail', key: 'ignored' } as const, [] as string[])
+const tests = atom({ plugin: 'filetrail', key: 'tests' } as const, null as TestRuns | null)
+const stale = atom({ plugin: 'filetrail', key: 'stale' } as const, {} as Record<string, StaleMark>)
 /** Kept in the session's state, so a reload starts from the head measured before. */
-const headRows = atom({ plugin: 'filetrail', key: 'head' } as const, null as number | null)
 /** Files the Claude touched list keeps. */
-const MAX_TOUCHED = 8
+const MAX_TOUCHED = TOUCHED_MAX
 // One build at a time: typing fast must not start a listing per key.
 let indexing: Promise<void> | null = null
 
@@ -144,19 +160,13 @@ function fire($: EngineInterface, what: string, work: () => Promise<unknown>) {
 const browsed = new Map<string, number>()
 
 /**
- * Opens the folders down to `path` (listing those not listed yet) and scrolls
- * the tree to its row; `select` also selects it. Paths outside the root are left alone.
+ * Opens the folders down to `path` (listing those not listed yet); `select` also selects it. Paths outside the root are left alone.
  * `follow` (Claude touched it): open folders that do not lead to `path` fold, but for
  * those the person browsed lately; asked by the person, the folders opened count as browsed.
  */
 async function reveal($: EngineInterface, path: string, select: boolean, follow = false) {
   const dirs = foldersTo(root, path)
   if (!dirs) return
-  // The person is scrolling the tree: Claude's file is noted for Back to Claude, the tree left be.
-  if (follow && (await $.clock.now()) < hold.until) {
-    await update($, files, f => ({ ...f, away: lower(path) }))
-    return
-  }
   const listed = await read($, listing)
   for (const d of dirs) if (!(lower(d) in listed)) await listDir($, d)
   const want = dirs.map(lower)
@@ -173,94 +183,16 @@ async function reveal($: EngineInterface, path: string, select: boolean, follow 
   } else for (const d of want) browsed.set(d, now)
   for (const d of want) open.add(d)
   await update($, files, f => ({ ...f, expanded: [...open], selected: select ? path : f.selected }))
-  // The tree glides to the row under the fixed head: no pane scroll, so the card stays.
-  await glideTo($, lower(path))
 }
 
-/**
- * The pane's fixed head and the tree under it. On the desktop the pane's window is the
- * desktop's: the wheel moves it before ui.scroll says so, and a mod can put it only at its
- * start or end (seen in traces). So the tree is drawn to fit under the head, nothing is
- * left to scroll, and it moves by Claude's glide and the ▲ ▼ buttons. The head's height
- * is measured, not known (the card's rows and the crab's pixels vary): when the pane
- * overflows after all and the person's wheel moves it, ui.scroll says how many rows it
- * drew, less the tree's lines; the pane then goes back to its start.
+/*
+ * The whole tree is drawn under the card, and the pane scrolls like a page when it is
+ * long, left where the person puts it. The tree is not moved to Claude's file: on the
+ * desktop the pane's window is the desktop's, and a mod can put it only at its start or
+ * end (seen in traces). It once drew only the rows that fit under the card, moved by a
+ * glide and ▲ ▼ buttons, which left a short tree when the card was tall (seen live).
  */
-/** Large on purpose: a head guessed too big leaves blank rows, too small hides the ▼ below the edge. */
-const HEAD_GUESS = 22
-const pane = { headRows: HEAD_GUESS, fit: 0, treeLines: 0, windowAt: 0, drawnAt: 0 }
-/** The tabs, the card and the search box take this many rows at least: a smaller head is a misread. */
-const MIN_HEAD_ROWS = 6
-/** How long after a redraw the pane's row count is trusted to be the new layout's. */
-const SETTLE_MS = 300
-/** The head as last measured, kept for the next session: the guess is only for the first. */
-const HEAD_KEY = 'filetrail:head'
 
-/** Puts the pane's window back at its start, where the card is, once the desktop moved it. */
-let snapping: { cancel: () => void } | null = null
-function snapTop($: EngineInterface) {
-  snapping?.cancel()
-  snapping = $.clock.after(SNAP_MS, () => {
-    snapping = null
-    void $.ui.scroll({ to: 'start', in: PANE }).catch(() => undefined)
-  })
-}
-/** The wheel's ticks come in a burst: the pane goes back once they pause. */
-const SNAP_MS = 60
-
-/**
- * The person scrolling the tree holds the follow for BROWSE_MS (as a folder they open is
- * left be): the tree stays where they are looking, and what Claude touches meanwhile waits
- * behind Back to Claude. The hold runs out on its own, and the tree goes back to Claude.
- */
-const hold = { until: 0, timer: null as { cancel: () => void } | null }
-
-/** Moves the tree's first row by `by` rows, as the person scrolls it, and holds the follow. */
-async function scrollTree($: EngineInterface, by: number) {
-  const f = await read($, files)
-  const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
-  const top = clampTop((f.top ?? 0) + by, count, Math.max(1, pane.fit - 1))
-  // The person takes over from a glide still under way.
-  gliding++
-  hold.until = (await $.clock.now()) + BROWSE_MS
-  hold.timer?.cancel()
-  hold.timer = $.clock.after(BROWSE_MS, () => void release($).catch(() => undefined))
-  if (top !== (f.top ?? 0)) await update($, files, x => ({ ...x, top }))
-}
-
-/** Ends the hold: the tree goes to the file Claude touched meanwhile, if any. */
-async function release($: EngineInterface) {
-  hold.timer?.cancel()
-  hold.timer = null
-  hold.until = 0
-  const away = (await read($, files)).away
-  if (!away) return
-  await update($, files, f => ({ ...f, away: undefined }))
-  await reveal($, spelled(await read($, listing), away), false, true)
-}
-
-
-/** Counts glides, so a newer one stops an older one mid-way. */
-let gliding = 0
-
-/** Moves the tree's first row, in a few steps, so `path` shows; it moves only when it is out of view. */
-async function glideTo($: EngineInterface, path: string) {
-  const f = await read($, files)
-  const rows = visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).slice(0, MAX_ROWS)
-  const at = rows.findIndex(r => lower(r.entry.path) === path)
-  if (at < 0 || !pane.fit) return
-  const from = f.top ?? 0
-  // Two rows of the window may be the above and below lines.
-  const to = topFor(at, rows.length, Math.max(1, pane.fit - 2), from)
-  const steps = glide(from, to)
-  const mine = ++gliding
-  steps.forEach((top, k) => {
-    $.clock.after(GLIDE_MS * k, () => {
-      if (mine !== gliding) return
-      void update($, files, x => ({ ...x, top })).catch(() => undefined)
-    })
-  })
-}
 
 /**
  * Lights the row Claude touched and, for one file, opens the tree to it: a file Claude
@@ -276,13 +208,15 @@ async function touch($: EngineInterface, target: Target) {
     if (onFile && onFile !== k) await unlight($, onFile)
     onFile = k
   }
+  const at = await $.clock.now()
   await update($, flash, f => ({ ...f, [k]: target.tone }))
-  await update($, last, () => ({ path: k, tone: target.tone }))
+  await update($, last, () => ({ path: k, tone: target.tone, at }))
   // A file read, written, committed or deleted joins the Claude touched list (a searched folder does not).
-  if (target.follow || target.tone === 'commit' || target.tone === 'delete') {
-    const at = await $.clock.now()
-    const entry: TouchedFile = { path: normPath(target.path), tone: target.tone, at, ...(target.by ? { by: target.by } : {}) }
+  if (target.follow || target.tone === 'commit' || target.tone === 'delete' || target.flag) {
+    const entry: TouchedFile = { path: normPath(target.path), tone: target.tone, at, ...(target.by ? { by: target.by } : {}), ...(target.flag ? { flag: target.flag } : {}) }
     await update($, touched, list => [entry, ...list.filter(f => lower(f.path) !== k)].slice(0, MAX_TOUCHED))
+    // The Now tree: this turn's files, the newest last.
+    await update($, turnFiles, list => [...list.filter(p => lower(p) !== k), normPath(target.path)].slice(-MAX_TURN_FILES))
   }
   flashTimers.get(k)?.cancel()
   flashTimers.set(k, $.clock.after(target.follow ? HOLD_MS : FLASH_MS, () => {
@@ -311,13 +245,19 @@ const MAX_BASH_TARGETS = 12
  * followed into view) and the folders or files a search or listing names (lit only).
  * Only paths inside the project that exist are touched.
  */
-async function lightReads($: EngineInterface, command: string) {
+async function lightReads($: EngineInterface, command: string): Promise<string[]> {
   let followed = false
+  const readers: string[] = []
   for (const t of readTargets(command, root).slice(0, MAX_BASH_TARGETS)) {
     if (!isInside(root, t.path) || !(await $.fs.exists(t.path))) continue
     await touch($, { path: t.path, tone: 'read', follow: t.follow && !followed })
-    if (t.follow) followed = true
+    if (t.follow) {
+      followed = true
+      readers.push(t.path)
+    }
   }
+  // The files a reader named: noted once the command went through, not before.
+  return readers
 }
 
 /** Files of one delete recorded at most, with the text of each kept: a wide `rm -r` should not fill the history. */
@@ -366,6 +306,156 @@ async function doomedBy($: EngineInterface, command: string): Promise<Doomed[]> 
     }
   }
   return out
+}
+
+type Watch = { path: string; truncates: boolean; before: Snapshot }
+
+/**
+ * The files a shell command names, as they stand before it runs: their size and headings
+ * and their text, for the comparison after. A file that is not there, is binary, is too long
+ * or cannot be read is left out: the command still runs, unwatched.
+ */
+async function watchBefore($: EngineInterface, command: string): Promise<Watch[]> {
+  const out: Watch[] = []
+  for (const w of namedFiles(command, root)) {
+    try {
+      if (!(await $.fs.exists(w.path))) continue
+      const text = String(await $.fs.read(w.path))
+      if (text.length > MAX_WATCH_CHARS || refusal(text)) continue
+      out.push({ ...w, before: snapshot(text, isMarkdown(w.path)) })
+    } catch { /* not watched */ }
+  }
+  return out
+}
+
+/**
+ * After a shell command: the watched files it shrank or overwrote become steps in the
+ * running turn (the old text kept as removed lines, capped) and rows in the touched list
+ * with their flag. A file the command deleted is the deletion record's, not this one's.
+ */
+async function recordShellChanges($: EngineInterface, watched: readonly Watch[], skip: ReadonlySet<string>) {
+  const found: { w: Watch; text: string; flag: string; note: string }[] = []
+  for (const w of watched) {
+    if (skip.has(lower(w.path))) continue
+    let text: string
+    try {
+      if (!(await $.fs.exists(w.path))) continue
+      text = String(await $.fs.read(w.path))
+    } catch { continue }
+    const flagged = judge(w.before, snapshot(text, isMarkdown(w.path)), w.truncates)
+    if (flagged) found.push({ w, text, ...flagged })
+  }
+  if (!found.length) return
+  const at = await $.clock.now()
+  pending ??= { id: `t${at}`, at, prompt: '', steps: [] }
+  const base = pending.id
+  pending.steps.push(...found.map(f => changeStep(f.w.path, root, f.w.before.text, f.text, f.note, at, `${base}.${callCount++}`)))
+  await showLive($)
+  for (const f of found) await touch($, { path: f.w.path, tone: 'write', follow: false, flag: f.flag })
+}
+
+/**
+ * Keeps a call that was refused or failed in the running turn, with who stopped it and why.
+ * Every tool's call counts, an edit's too (its step also says it was not applied).
+ */
+async function recordBlocked($: EngineInterface, call: unknown, result: unknown) {
+  const found = blockedOf(result)
+  if (!found) return
+  const at = await $.clock.now()
+  pending ??= { id: `t${at}`, at, prompt: '', steps: [] }
+  const tool = String((call as { tool?: unknown }).tool ?? '')
+  const entry = { id: `${pending.id}.b${callCount++}`, tool, call: callText(call as { tool: string }), reason: found.reason, kind: found.kind, at }
+  pending.blocked = [...(pending.blocked ?? []), entry]
+  await showLive($)
+}
+
+/** Files Claude read this session, as they were then: what a later change is measured against. */
+const reads = new Map<string, ReadRecord>()
+
+/** git's HEAD, or null outside a repo or when git does not answer. */
+async function headSha($: EngineInterface, fresh = false): Promise<string | null> {
+  if (isRepo === false) return null
+  if (!fresh && headCache !== undefined) return headCache
+  const ran = await $.process.run(['git', 'rev-parse', 'HEAD'], { cwd: root, timeoutMs: 5000 }).catch(() => null)
+  headCache = ran && ran.exitCode === 0 ? ran.stdout.trim() || null : null
+  return headCache
+}
+
+/** HEAD as last asked (undefined: not yet this turn): the reads of one turn share one question to git. */
+let headCache: string | null | undefined
+
+/** A checksum of a file's text now; null when it is gone, binary, too long or unreadable. */
+async function sumOf($: EngineInterface, path: string): Promise<string | null> {
+  try {
+    if (!(await $.fs.exists(path))) return null
+    const text = String(await $.fs.read(path))
+    return text.length > MAX_WATCH_CHARS || refusal(text) ? null : checksum(text)
+  } catch {
+    return null
+  }
+}
+
+/** Remembers a file of the project as Claude reads it now, and takes any marker off it: what Claude knows is current. */
+async function noteRead($: EngineInterface, path: string) {
+  if (!isInside(root, path)) return
+  const k = lower(path)
+  const sum = await sumOf($, path)
+  if (sum === null) return
+  remember(reads, k, { path: normPath(path), at: await $.clock.now(), sum, head: await headSha($) })
+  if (k in (await read($, stale))) await update($, stale, m => Object.fromEntries(Object.entries(m).filter(([p]) => p !== k)))
+}
+
+const ORDER: StaleBy[] = ['edit', 'commit', 'outside']
+
+/** Marks a file Claude read as edited by Claude, at once (the full check comes when the turn ends). */
+async function markEdited($: EngineInterface, path: string) {
+  const k = lower(path)
+  if (!reads.has(k)) return
+  const at = await $.clock.now()
+  await update($, stale, m => ({ ...m, [k]: { by: [...new Set<StaleBy>(['edit', ...(m[k]?.by ?? [])])].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)), at } }))
+}
+
+/** The files (lower-cased, relative to the project) that differ between a HEAD a file was read at and HEAD now; null when git cannot say. */
+async function changedSince($: EngineInterface, from: string): Promise<Set<string> | null> {
+  const ran = await $.process.run(['git', 'diff', '--name-only', '--relative', `${from}..HEAD`], { cwd: root, timeoutMs: 10_000 }).catch(() => null)
+  if (!ran || ran.exitCode !== 0) return null
+  return new Set(ran.stdout.split(/\r?\n/).filter(Boolean).map(lower))
+}
+
+/**
+ * Looks again at every file Claude read: changed on the disk, held by a commit since, or
+ * edited by Claude (from the steps filetrail recorded). The marks are replaced by what it finds.
+ */
+async function refreshStale($: EngineInterface) {
+  if (!reads.size) return
+  const head = await headSha($, true)
+  // One question to git for each HEAD the files were read at, not one for each file.
+  const held = new Map<string, Set<string> | null>()
+  const steps = [...(await read($, history)).flatMap(t => t.steps), ...(pending?.steps ?? [])]
+  const at = await $.clock.now()
+  const marks: Record<string, StaleMark> = {}
+  for (const [k, rec] of reads) {
+    const edited = steps.some(s => lower(s.path) === k && s.at >= rec.at && s.status !== 'denied' && s.status !== 'failed' && (EDIT_TOOLS.has(s.tool) || s.tool === 'Bash'))
+    let committed = false
+    if (rec.head && head && rec.head !== head) {
+      if (!held.has(rec.head)) held.set(rec.head, await changedSince($, rec.head))
+      committed = held.get(rec.head)?.has(lower(relTo(root, rec.path))) ?? false
+    }
+    const by = judgeStale(rec, { sum: await sumOf($, rec.path) }, edited, committed)
+    if (by) marks[k] = { by, at }
+  }
+  await update($, stale, () => marks)
+}
+
+/** Keeps a finished test command as the session's last run (one a hook or Claude Code refused never ran). */
+async function recordTestRun($: EngineInterface, command: string, started: number, result: unknown) {
+  const outcome = outcomeOf(result)
+  // A refusal (a deny, or an error saying a hook or Claude Code stopped it) is not a run.
+  const stopped = blockedOf(result)?.kind
+  if (outcome === 'denied' || stopped === 'hook' || stopped === 'harness' || commandKind(command) !== 'test') return
+  const at = await $.clock.now()
+  const run = { command: shortCommand(command), ok: outcome === 'ok', at, ms: at - started, scope: testScope(command) }
+  await update($, tests, runs => addRun(runs, run))
 }
 
 /** Takes the paths not yet recorded as deleted and marks them so, before any await: two finders never record one twice. */
@@ -545,8 +635,8 @@ async function loadHistory($: EngineInterface) {
 /** Shows the running turn as it stands: a copy, since its steps change as the tools answer. */
 async function showLive($: EngineInterface) {
   const now = pending
-  if (!now || !now.steps.length) return
-  await update($, live, () => ({ ...now, steps: now.steps.map(s => ({ ...s })) }))
+  if (!now || (!now.steps.length && !now.blocked?.length)) return
+  await update($, live, () => ({ ...now, steps: now.steps.map(s => ({ ...s })), ...(now.blocked ? { blocked: now.blocked.map(b => ({ ...b })) } : {}) }))
 }
 
 /** Adds a finished turn to the project's history and keeps every project inside the store's budget. */
@@ -638,35 +728,102 @@ async function startGitActions($: EngineInterface, command: string): Promise<str
   // The crab acts out the last push or merge of the command while it runs.
   const acted = [...added].reverse().find(a => a.pose)
   if (acted?.pose) {
-    stageTimer?.cancel()
-    stageTimer = null
-    stageId = acted.id
-    await update($, stage, () => ({ pose: acted.pose!, state: 'running', target: acted.target }))
+    gitStage = { id: acted.id, token: await startStage($, { pose: acted.pose, target: acted.target }) }
   }
   return added.map(a => a.id)
 }
 
-/** The bar entry the crab acts out, and the timer that puts it down FLASH_MS after it is done. */
-let stageId: string | null = null
+/** The bar entry the crab acts out, and its stage's token. */
+let gitStage: { id: string; token: number } | null = null
+
+/**
+ * The crab's stage: what Claude is doing besides a file. A new one replaces the one on show
+ * (the newest wins); each has a token, so an older one ending does not touch a newer. Done,
+ * it stays FLASH_MS with the pill saying so, then goes. While a helper (the Agent tool)
+ * runs, the calls it makes do not take the card from it: a tool call does not say whose it is.
+ */
+let stageToken = 0
 let stageTimer: { cancel: () => void } | null = null
+let helpers = 0
+
+/** Shows a stage as running; its token, 0 when a helper holds the card. */
+async function startStage($: EngineInterface, s: Omit<Stage, 'state' | 'at'>): Promise<number> {
+  if (helpers > 0 && s.pose !== 'agent') return 0
+  stageTimer?.cancel()
+  stageTimer = null
+  const token = ++stageToken
+  const at = await $.clock.now()
+  await update($, stage, () => ({ ...s, state: 'running', at }))
+  return token
+}
+
+/**
+ * Ends a stage as its call came out. Tests that fail say so; anything else that fails or
+ * is refused becomes an error ("Push failed", "Command denied"). Either way it shows for
+ * FLASH_MS, unless a newer stage took the card meanwhile.
+ */
+async function endStage($: EngineInterface, token: number, outcome: StepStatus) {
+  if (!token || token !== stageToken) return
+  const s = await read($, stage)
+  if (!s) return
+  const ok = outcome === 'ok'
+  const failedWord = outcome === 'denied' ? `${STAGE_NOUN[s.pose]} denied` : undefined
+  const next: Stage = ok ? { ...s, state: 'ok' }
+    : s.pose === 'test' && outcome === 'failed' ? { ...s, state: 'failed' }
+    : { ...s, state: 'failed', ...(failedWord ? { word: failedWord } : {}) }
+  await update($, stage, () => next)
+  stageTimer = $.clock.after(FLASH_MS, () => {
+    if (token !== stageToken) return
+    stageTimer = null
+    void update($, stage, () => null).catch(() => undefined)
+  })
+}
+
+/** Shows an error at once, for a call that had no stage of its own (an Edit that failed). */
+async function flashError($: EngineInterface, word: string, target: string, dir = '') {
+  const token = await startStage($, { pose: 'error', target, dir, word })
+  await endStage($, token, 'failed')
+}
+
+/** A shell command's stage: tests, a search or a plain command, named by its first line. */
+function shellStage($: EngineInterface, command: string): Promise<number> {
+  const kind = commandKind(command)
+  return startStage($, { pose: kind, target: kind === 'test' ? '' : shortCommand(command), ...(kind === 'test' ? { dir: shortCommand(command) } : {}) })
+}
+
+/** The keys of the other tools' calls the crab reads. */
+type OtherCall = { tool: string; command?: unknown; pattern?: unknown; path?: unknown; description?: unknown }
+
+/** The stage of a call that is not an edit or Bash: PowerShell, a search, a helper; 0 for the rest. */
+async function otherStage($: EngineInterface, e: OtherCall): Promise<number> {
+  if (e.tool === 'PowerShell') return shellStage($, String(e.command ?? ''))
+  if (e.tool === 'Grep' || e.tool === 'Glob') {
+    const where = typeof e.path === 'string' && e.path ? relTo(root, normPath(e.path)) : ''
+    return startStage($, { pose: 'search', target: `"${String(e.pattern ?? '').slice(0, 30)}"`, ...(where ? { dir: where } : {}) })
+  }
+  if (e.tool === 'Agent') return startStage($, { pose: 'agent', target: String(e.description ?? '').slice(0, 40) })
+  return 0
+}
+
+/** The file a call names, for an error's line: its name, or '' when it names none. */
+function fileName(e: unknown): string {
+  const path = (e as { file_path?: unknown }).file_path
+  return typeof path === 'string' && path ? normPath(path).split('/').pop() ?? '' : ''
+}
+
+/** A stage's noun, for "… denied". */
+const STAGE_NOUN: Record<Stage['pose'], string> = {
+  push: 'Push', merge: 'Merge', search: 'Search', command: 'Command', test: 'Tests', agent: 'Helper', error: 'Call',
+}
 
 /** Marks the bar's running actions done, failed or denied, as the command came out. */
 async function finishGitActions($: EngineInterface, ids: readonly string[], outcome: StepStatus): Promise<void> {
   const state: GitActionEntry['state'] = outcome === 'denied' ? 'denied' : outcome === 'failed' ? 'failed' : 'ok'
   await update($, gitLog, list => list.map(a => (ids.includes(a.id) ? { ...a, state } : a)))
-  if (!stageId || !ids.includes(stageId)) return
-  // Done: the crab keeps the pose a moment as the pill says so. Failed or denied: it stops at once.
-  if (state === 'ok') {
-    await update($, stage, s => (s ? { ...s, state: 'ok' as const } : s))
-    stageTimer = $.clock.after(FLASH_MS, () => {
-      stageId = null
-      stageTimer = null
-      void update($, stage, () => null).catch(() => undefined)
-    })
-  } else {
-    stageId = null
-    await update($, stage, () => null)
-  }
+  if (!gitStage || !ids.includes(gitStage.id)) return
+  const { token } = gitStage
+  gitStage = null
+  await endStage($, token, outcome)
 }
 
 /**
@@ -674,7 +831,9 @@ async function finishGitActions($: EngineInterface, ids: readonly string[], outc
  * The text is read again for each page rather than kept, so state holds one page.
  */
 async function loadPreview($: EngineInterface, path: string, page: number): Promise<void> {
-  await update($, preview, cur => (cur && lower(cur.path) === lower(path) && cur.source !== undefined ? { ...cur, page } : { path, page }))
+  await update($, preview, cur => (cur && lower(cur.path) === lower(path) && (cur.source !== undefined || cur.image) ? { ...cur, page } : { path, page }))
+  const kind = imageKind(path)
+  if (kind) return loadImage($, path, kind)
   let text: string
   try {
     text = String(await $.fs.read(path))
@@ -690,6 +849,29 @@ async function loadPreview($: EngineInterface, path: string, page: number): Prom
   await update($, preview, () => ({ path, page: Math.floor((shown.first - 1) / PAGE_LINES), source: shown.source, total: shown.total }))
 }
 
+/**
+ * Shows a PNG, JPEG or SVG file: its size from its own header, and the one drawing that shows
+ * it when it is small enough. Always its words too, so a surface that draws no picture says what it is.
+ */
+async function loadImage($: EngineInterface, path: string, kind: ImageKind): Promise<void> {
+  let base64: string
+  try {
+    base64 = (await $.fs.read(path, { as: 'bytes' })).base64
+  } catch (err) {
+    // The read stops at 4 MiB; anything else is a file gone or unreadable.
+    const reason: Preview['reason'] = /MiB|large|size/i.test(String(err)) ? 'large' : 'missing'
+    await update($, preview, () => ({ path, page: 0, reason }))
+    return
+  }
+  const bytes = Math.floor((base64.length * 3) / 4) - (base64.match(/=+$/)?.[0].length ?? 0)
+  const size = dimensionsOf(kind, base64)
+  const draw = bytes <= MAX_DRAW_BYTES ? imageSvg(kind, base64, size) : null
+  await update($, preview, () => ({
+    path, page: 0,
+    image: { kind, ...size, bytes, ...(draw ? { svg: draw.svg, drawWidth: draw.width, drawHeight: draw.height } : {}) },
+  }))
+}
+
 /** The preview reads its file again after Claude changed it, on the same page. */
 async function refreshPreview($: EngineInterface, path: string): Promise<void> {
   const cur = await read($, preview)
@@ -703,11 +885,16 @@ export const register: Register = on => {
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
     // A reload forgets the running turn's steps, so a Now row left in state would never be saved.
     await update($, live, () => null)
-    // Nor would a push or merge left acting in state ever be put down: its timer is gone.
+    // Nor would a stage left acting in state ever be put down: its timer is gone. A turn
+    // left running is over too.
     await update($, stage, () => null)
-    // The head measured in an earlier session, unless this one measured it already.
-    const kept = await $.store.get(HEAD_KEY)
-    if (typeof kept === 'number' && (await read($, headRows)) === null) await update($, headRows, () => kept)
+    await update($, working, () => false)
+    // The tree's view as left in an earlier session.
+    const mode = await $.store.get(MODE_KEY)
+    if (mode === 'now' || mode === 'all') await update($, files, f => ({ ...f, mode: mode as TreeMode }))
+    // The card's size as the handle left it.
+    const rows = await $.store.get(ROWS_KEY)
+    if (typeof rows === 'number') await update($, files, f => ({ ...f, touchedRows: rows }))
     await listDir($, root)
     scheduleGit($)
     void openPane($)
@@ -718,7 +905,13 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) pending = { id: e.turnId, at: await $.clock.now(), prompt: firstLine(e.text), steps: [] }
+    if (e.agentId === undefined) {
+      pending = { id: e.turnId, at: await $.clock.now(), prompt: firstLine(e.text), steps: [] }
+      headCache = undefined
+      await update($, working, () => true)
+      // A new turn: the Now tree starts empty (the last turn's stayed on show until now).
+      await update($, turnFiles, () => [])
+    }
     return next(e)
   }).catch(async ($, e, next) => {
     $.ui.log(`filetrail: turn.start failed: ${String(next.error)}`)
@@ -733,11 +926,21 @@ export const register: Register = on => {
     if (target && target.tone === 'read') await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     if (e.tool === 'Bash') {
       const command = String((e as unknown as { command?: unknown }).command ?? '')
-      await lightReads($, command).catch(err => $.ui.log(`filetrail: Bash highlight failed: ${String(err)}`))
+      const readers = await lightReads($, command).catch(err => { $.ui.log(`filetrail: Bash highlight failed: ${String(err)}`); return [] as string[] })
       const ids = await startGitActions($, command).catch(err => { $.ui.log(`filetrail: the git bar did not update: ${String(err)}`); return [] as string[] })
       // What the command is about to delete, with each file's text, read while it is still there.
       const doomed = await doomedBy($, command).catch(err => { $.ui.log(`filetrail: a deletion was not read: ${String(err)}`); return [] as Doomed[] })
+      // The crab: a push or a merge acts itself out, a commit lights its files; anything else is a stage.
+      const token = gitStage && ids.includes(gitStage.id) || isCommit(command) ? 0 : await shellStage($, command)
+      // The files the command names, as they are before it runs, to see what it did to them.
+      const watched = await watchBefore($, command).catch(() => [] as Watch[])
+      const started = await $.clock.now()
       const r = await next(e)
+      await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
+      // Claude has seen these files only if the command went through.
+      if (outcomeOf(r) === 'ok') for (const p of readers) await noteRead($, p).catch(err => $.ui.log(`filetrail: a read was not noted: ${String(err)}`))
+      await endStage($, token, outcomeOf(r)).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
+      await recordTestRun($, command, started, r).catch(err => $.ui.log(`filetrail: a test run was not recorded: ${String(err)}`))
       if (doomed.length) {
         try {
           const goneNow: Doomed[] = []
@@ -750,6 +953,9 @@ export const register: Register = on => {
           $.ui.log(`filetrail: a deletion was not recorded: ${String(err)}`)
         }
       }
+      if (watched.length && outcomeOf(r) !== 'denied') {
+        await recordShellChanges($, watched, new Set(doomed.map(d => lower(d.path)))).catch(err => $.ui.log(`filetrail: a changed file was not recorded: ${String(err)}`))
+      }
       // A folder found not to be a repo is asked again once one is made in it.
       if (makesRepo(command)) { isRepo = null; scheduleGit($) }
       if (ids.length) {
@@ -757,12 +963,32 @@ export const register: Register = on => {
         if (!isCommit(command)) scheduleGit($)
       }
       if (isCommit(command)) {
-        if (outcomeOf(r) === 'ok') await lightCommit($).catch(err => $.ui.log(`filetrail: commit highlight failed: ${String(err)}`))
+        if (outcomeOf(r) === 'ok') {
+          await lightCommit($).catch(err => $.ui.log(`filetrail: commit highlight failed: ${String(err)}`))
+          await refreshStale($).catch(err => $.ui.log(`filetrail: read files were not checked: ${String(err)}`))
+        }
         scheduleGit($)
       }
       return r
     }
-    if (!EDIT_TOOLS.has(e.tool)) return next(e)
+    if (!EDIT_TOOLS.has(e.tool)) {
+      const token = await otherStage($, e as unknown as OtherCall).catch(() => 0)
+      if (e.tool === 'Agent') helpers++
+      const watched = e.tool === 'PowerShell' ? await watchBefore($, String((e as unknown as OtherCall).command ?? '')).catch(() => [] as Watch[]) : []
+      const started = await $.clock.now()
+      let r
+      try { r = await next(e) } finally { if (e.tool === 'Agent') helpers-- }
+      const outcome = outcomeOf(r)
+      if (outcome === 'ok' && target && target.tone === 'read' && target.follow) await noteRead($, target.path).catch(err => $.ui.log(`filetrail: a read was not noted: ${String(err)}`))
+      if (e.tool === 'PowerShell') await recordTestRun($, String((e as unknown as OtherCall).command ?? ''), started, r).catch(err => $.ui.log(`filetrail: a test run was not recorded: ${String(err)}`))
+      await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
+      if (watched.length && outcome !== 'denied') {
+        await recordShellChanges($, watched, new Set()).catch(err => $.ui.log(`filetrail: a changed file was not recorded: ${String(err)}`))
+      }
+      if (token) await endStage($, token, outcome).catch(err => $.ui.log(`filetrail: the crab did not update: ${String(err)}`))
+      else if (outcome !== 'ok') await flashError($, `${e.tool} ${outcome}`, '', fileName(e)).catch(() => undefined)
+      return r
+    }
     let steps: Turn['steps'] = []
     try {
       const call = e as unknown as EditCall
@@ -779,12 +1005,15 @@ export const register: Register = on => {
     const r = await next(e)
     const status = outcomeOf(r)
     for (const s of steps) s.status = status
+    await recordBlocked($, e, r).catch(err => $.ui.log(`filetrail: a blocked call was not recorded: ${String(err)}`))
+    if (status !== 'ok') await flashError($, `${e.tool} ${status}`, '', fileName(e)).catch(() => undefined)
     if (steps.length) await showLive($).catch(err => $.ui.log(`filetrail: the live turn did not update: ${String(err)}`))
     if (status === 'ok' && steps[0]) {
       // A Write may add a file: list its folder again if it is on show.
       const dir = lower(parentOf(steps[0].path))
       if (dir in (await read($, listing))) await listDir($, parentOf(steps[0].path))
       scheduleGit($)
+      await markEdited($, steps[0].path).catch(err => $.ui.log(`filetrail: an edit was not marked: ${String(err)}`))
       await refreshPreview($, steps[0].path).catch(err => $.ui.log(`filetrail: the preview did not update: ${String(err)}`))
       if (target) await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     }
@@ -800,13 +1029,14 @@ export const register: Register = on => {
     if (e.agentId !== undefined) return r
     const turn = pending
     pending = null
+    await update($, working, () => false)
     // Deletions the refresh below finds were Claude's, and go in this turn.
     turnEndedAt = await $.clock.now()
     lastTurn = turn
-    if (turn && turn.steps.length) {
+    if (turn && (turn.steps.length || turn.blocked?.some(b => b.kind !== 'failed'))) {
       try { await saveTurn($, turn) } catch (err) { $.ui.log(`filetrail: history was not saved: ${String(err)}`) }
       // The band offers this turn until it is replayed or another turn changes files.
-      await update($, hint, () => hintFor(turn))
+      if (turn.steps.length) await update($, hint, () => hintFor(turn))
     }
     // Saved now (or it changed nothing): the timeline's Now row gives way to the saved turn.
     await update($, live, () => null)
@@ -814,6 +1044,8 @@ export const register: Register = on => {
     if (onFile) await unlight($, onFile).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     // Bash may have changed files too: list the open folders and read git again.
     await relist($)
+    // Files Claude read earlier may have changed in the turn: its own edit, a commit, or outside.
+    await refreshStale($).catch(err => $.ui.log(`filetrail: read files were not checked: ${String(err)}`))
     // Files may have come or gone: a search already in use gets a fresh list.
     if (await read($, index)) void ensureIndex($).catch(err => $.ui.log(`filetrail: the search list was not rebuilt: ${String(err)}`))
     scheduleGit($)
@@ -853,7 +1085,7 @@ export const register: Register = on => {
     }
     if (args === 'export') return { text: await exportHistory($) }
     if (args === 'replay') {
-      const latest = (await read($, history)).at(-1)
+      const latest = (await read($, history)).filter(t => t.steps.length || !t.blocked?.length).at(-1)
       if (!latest) return { text: 'filetrail: no edits recorded in this project yet.' }
       await openReplay($, latest.id)
       return { text: `filetrail: replaying ${latest.steps.length} edit${latest.steps.length === 1 ? '' : 's'} from ${stamp(latest.at)}.` }
@@ -907,32 +1139,25 @@ export const register: Register = on => {
   // A double-click's second click opens a file (a folder has nothing to open, so it is
   // let be rather than closing what the first click opened); a right-click copies the path.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown; tool?: unknown } | null
+    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown; tool?: unknown; resize?: unknown; end?: unknown } | null
     if (e.requestId !== PANE || !data || typeof data !== 'object') return next(e)
     if (typeof data.tool === 'string' && toolPresses.has(data.tool)) { toolPresses.get(data.tool)!(); return {} }
+    // The card's handle, let go: as many touched files as it asks, kept for the next session.
+    if (typeof data.resize === 'number' && e.element === 'card-handle') {
+      const rows = Math.max(0, Math.min(TOUCHED_MAX, Math.round(data.resize)))
+      await update($, files, f => ({ ...f, touchedRows: rows, touchedOpen: false }))
+      await $.store.set(ROWS_KEY, rows)
+      return {}
+    }
     if (data.press === true && rowPresses.has(e.element)) { rowPresses.get(e.element)!(); return {} }
     if (data.open === true) { rowOpens.get(e.element)?.(); return {} }
     if (data.copy === true && rowCopies.has(e.element)) { rowCopies.get(e.element)!(data.full === true, e.surface); return {} }
     return next(e)
   })
 
-  // The tree's head stays put: in the Files tab's tree the pane has nothing to scroll. If it
-  // overflowed after all (the card grew), the person's wheel measures the head and the
-  // pane goes back to its start. Elsewhere (History, a preview, search results) the pane
-  // scrolls as usual.
-  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
-    const f = await read($, files)
-    if ((await read($, tab)) !== 'files' || (f.query ?? '').trim() || (await read($, preview))) return next(e)
-    // All the pane drew, less the tree's lines. The person's moves only, from a settled
-    // layout that overflows: the mod's own read a count from before (seen in a trace).
-    const head = e.contentRows - pane.treeLines
-    const settled = (await $.clock.now()) - pane.drawnAt >= SETTLE_MS
-    if (e.origin.kind === 'person' && settled && e.contentRows > e.bodyRows && head >= MIN_HEAD_ROWS && head !== pane.headRows) {
-      pane.headRows = head
-      await update($, headRows, () => head)
-      await $.store.set(HEAD_KEY, head)
-    }
-    if (e.origin.kind === 'person' && e.offset > 0) snapTop($)
+  // Logged only: a close that never reaches here is the surface's, one that does is let through.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    $.ui.log(`filetrail: pane close from ${e.origin.kind}`)
     return next(e)
   })
 
@@ -941,22 +1166,6 @@ export const register: Register = on => {
     // Box): left out there, the crab falls back to its blocks and the branch to its glyph.
     const els = $.ui.resolve(e)
     if (e.surface === 'terminal') NO_SVG.add(els)
-    // Where the pane's window stands, the tree's room under the head, and the lines it
-    // will draw: what the ui.scroll hook measures the head against.
-    pane.windowAt = e.props.scroll.offset
-    pane.headRows = (await read($, headRows)) ?? HEAD_GUESS
-    pane.drawnAt = await $.clock.now()
-    pane.fit = treeRows(e.props.scroll.bodyRows, pane.headRows)
-    {
-      const f = await read($, files)
-      const count = Math.min(visibleRows(root, await read($, listing), f.expanded, f.hideDots === true).length, MAX_ROWS)
-      // The Following paused line takes one of the tree's rows, and counts.
-      pane.treeLines = (count ? treeLines(treeWindow(count, f.top ?? 0, pane.fit - (f.away ? 1 : 0))) : 1) + (f.away ? 1 : 0)
-      if ((await read($, tab)) === 'files' && !(f.query ?? '').trim() && !(await read($, preview))) {
-        // The desktop moved the pane on its own (seen in a trace, with no ui.scroll): back to its start.
-        if (pane.windowAt > 0) snapTop($)
-      }
-    }
     clearRows()
     const { Box, Text, Button } = els
     const current = await read($, tab)
@@ -1000,11 +1209,22 @@ export const register: Register = on => {
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
                 toggleTouched: () => fire($, 'listing the touched files', () => update($, files, f => ({ ...f, touchedOpen: !f.touchedOpen }))),
-                page: dir => fire($, 'moving the tree', () => scrollTree($, dir * Math.max(1, pane.fit - 2))),
-                backToClaude: () => fire($, 'going back to Claude', () => release($)),
+                setMode: mode => fire($, 'switching the tree', async () => {
+                  await update($, files, f => ({ ...f, mode }))
+                  await $.store.set(MODE_KEY, mode)
+                }),
+                openInAll: dir => fire($, 'opening a folder', async () => {
+                  const k = lower(dir.path)
+                  browsed.set(k, await $.clock.now())
+                  const up = (foldersTo(root, dir.path) ?? []).map(lower)
+                  await update($, files, f => ({ ...f, mode: 'all' as const, expanded: [...new Set([...f.expanded, ...up, k])] }))
+                  await $.store.set(MODE_KEY, 'all')
+                  if (!(k in (await read($, listing)))) await listDir($, dir.path)
+                }),
                 refresh: () => fire($, 'refreshing', async () => {
                   await relist($)
                   await refreshGit($)
+                  await refreshStale($)
                   if (await read($, index)) await ensureIndex($)
                 }),
                 toggleDots: () => fire($, 'showing dotfiles', () => update($, files, f => ({ ...f, hideDots: !f.hideDots }))),
@@ -1030,7 +1250,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), pane.fit, await read($, stage))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

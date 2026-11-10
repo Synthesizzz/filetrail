@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import { FLASH_MS } from '../hooks/activity'
-import { crabSvg, CRAB_PX, GONE, MERGE, PUSH } from '../hooks/crab'
-import { badgeOf, BRANCH_GLYPH, CHIP_BG, ICON_MUTED } from '../hooks/files-view'
+import { crabSvg, CRAB_PX, CRAB_ROWS, GONE, MERGE, PUSH, TERM_FRAMES } from '../hooks/crab'
+import { badgeOf, BRANCH_GLYPH, CHIP_BG, GIT_HEX, ICON_MUTED, typeColor } from '../hooks/files-view'
 
 const BOOK_COLOR = '#8b5cf6'
 import { NOW_STYLE, STAGE_STYLE, spelled } from '../hooks/now-card'
@@ -61,9 +61,10 @@ test('the card shrinks with the pane: the line wraps, and narrow the pill goes u
   }
 })
 
-test('badgeOf: the extension upper-cased, three letters at most', () => {
+test('badgeOf: the whole extension upper-cased', () => {
   expect(badgeOf('C:/w/client.test.js')).toBe('JS')
-  expect(badgeOf('C:/w/README.markdown')).toBe('MAR')
+  expect(badgeOf('C:/w/README.markdown')).toBe('MARKDOWN')
+  expect(badgeOf('C:/w/Practice_Solution.ipynb')).toBe('IPYNB')
   expect(badgeOf('C:/w/Makefile')).toBe('TXT')
 })
 
@@ -100,6 +101,8 @@ test('Claude touched lists the files read and edited, newest first, with a pill 
   expect(await ui.find({ key: 'touched-more' })).toBeUndefined()
   const rows = (await ui.findAll({ type: 'Client' })).map((c: any) => c.key).filter((k: string) => k?.startsWith('touched-'))
   expect(rows).toEqual(['touched-c:/work/demo/readme.md', 'touched-c:/work/demo/src/app.ts'])
+  // The rows type themselves in on their own frame clock.
+  await ui.advance(500)
   // Only the file Claude is on is lit: the one it left says what was done, unfilled.
   expect(await rowText(ui, rows[0])).toMatch(/^ MD  README\.md\s+Editing $/)
   expect(await rowText(ui, rows[1])).toMatch(/^ TS  App\.ts Src\s+Read $/)
@@ -188,7 +191,7 @@ test('a push: the crab sends an arrow up and the pill says Pushed, then the card
   await ui.unmount()
 })
 
-test('a merge: the crab joins two branches and the pill says Merged; a failed one is not acted out', async ($, on) => {
+test('a merge: the crab joins two branches and the pill says Merged; a failed one says so in red, then goes', async ($, on) => {
   const { clock } = world(on, { dirs: DIRS, git: GIT })
   await $.session.start(START)
   await clock.advance(1000)
@@ -201,6 +204,9 @@ test('a merge: the crab joins two branches and the pill says Merged; a failed on
   await $.tool.call({ tool: 'Bash', command: 'git merge other --fail' })
   await clock.advance(200)
   expect(await hasText(ui, 'Merged other')).toBe(false)
+  expect(await hasText(ui, 'Merge failed other')).toBe(true)
+  expect(await ui.find({ key: 'now-card' })).toMatchObject({ props: { borderColor: GONE } })
+  await clock.advance(FLASH_MS + 100)
   expect((await crabOf(ui))?.props?.alt).toBe('Crab asleep: Claude is idle')
   await ui.unmount()
 })
@@ -231,4 +237,75 @@ test('the branch chip carries GitHub\'s branch icon, the latest git action its o
   expect(await term.find({ type: 'Svg' })).toBeUndefined()
   expect((await term.findAll({ type: 'Text' })).some((t: any) => String(t.text).includes(`${BRANCH_GLYPH} main`))).toBe(true)
   await term.unmount()
+})
+
+test('a touched file\'s badge takes its type\'s colour, as the tree\'s marker does; grey for a type not listed', async ($, on) => {
+  const { clock } = world(on, { dirs: { 'C:\work\demo': [['app.ts', 'file'], ['Makefile', 'file']] }, files: { 'C:\work\demo\app.ts': 'a\n', 'C:\work\demo\Makefile': 'm\n' } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.tool.call({ tool: 'Read', file_path: 'C:/work/demo/app.ts' } as never)
+  await $.tool.call({ tool: 'Read', file_path: 'C:/work/demo/Makefile' } as never)
+  await clock.advance(200)
+  await ui.advance(500)
+  const badge = async (key: string) => (await rowRuns(ui, key)).find(r => /^\s*[A-Z]{2,3}\s*$/.test(r.text))?.props.color
+  expect(await badge('touched-c:/work/demo/app.ts')).toBe(typeColor('app.ts'))
+  expect(await badge('touched-c:/work/demo/makefile')).toBe(GIT_HEX.muted)
+  await ui.unmount()
+})
+
+test('the terminal paints no translucent fill: badges and the pill are solid with ink that contrasts, the crab is its own Client', async ($, on) => {
+  const dirs: Record<string, [string, 'file' | 'dir'][]> = { 'C:\work\demo': [['app.ts', 'file']], 'C:/work/demo': [['app.ts', 'file']] }
+  const { clock } = world(on, { dirs, files: { 'C:\work\demo\app.ts': 'a\n' } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'terminal', ...PANE })
+  await $.tool.call({ tool: 'Edit', file_path: 'C:/work/demo/app.ts', old_string: 'a', new_string: 'b' } as never)
+  await clock.advance(200)
+  await ui.advance(500)
+  const fills = [...JSON.stringify(await ui.find({ key: 'now-card' })).matchAll(/"(?:backgroundColor|bg)":"(#[0-9a-fA-F]+)"/g)].map(m => m[1]!)
+  expect(fills.filter(f => f.length > 7)).toEqual([])
+  const badge = (await rowRuns(ui, 'touched-c:/work/demo/app.ts')).find(r => r.text.trim() === 'TS')
+  expect(badge?.props).toMatchObject({ backgroundColor: typeColor('app.ts') })
+  expect(badge?.props.color).not.toBe(typeColor('app.ts'))
+  const pill = (await ui.findAll({ type: 'Text' })).find((t: any) => t.text === '\u00a0Editing\u00a0')
+  expect(pill?.props).toMatchObject({ backgroundColor: NOW_STYLE.write.color })
+  expect(pill?.props.color).not.toBe(NOW_STYLE.write.color)
+  expect(await ui.find({ key: 'crab-write' })).toMatchObject({ type: 'Client' })
+  expect(await rowRuns(ui, 'crab-write')).toHaveLength(4)
+  expect(await ui.find({ key: 'now-row' })).toMatchObject({ props: { marginTop: 1 } })
+  await ui.unmount()
+})
+
+test('the terminal crab has a frame set for every pose, each 4 rows of 8 cells, stepping only when there is more than one', () => {
+  expect(CRAB_ROWS).toHaveLength(4)
+  for (const [pose, { frames, ms }] of Object.entries(TERM_FRAMES)) {
+    expect(frames.length, pose).toBeGreaterThan(0)
+    for (const rows of frames) {
+      expect(rows, pose).toHaveLength(4)
+      for (const row of rows) expect([...row], `${pose}: ${row}`).toHaveLength(8)
+    }
+    expect(ms > 0, pose).toBe(frames.length > 1)
+  }
+})
+
+test('the terminal crab steps through its frames on its own clock, a new pose starting again, a still pose never ticking', { timeoutMs: 15_000 }, async ($, on) => {
+  const dirs: Record<string, [string, 'file' | 'dir'][]> = { 'C:\\work\\demo': [['app.ts', 'file']], 'C:/work/demo': [['app.ts', 'file']] }
+  const { clock } = world(on, { dirs, files: { 'C:\\work\\demo\\app.ts': 'a\n' } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'terminal', ...PANE })
+  const rows = async (key: string) => (await rowRuns(ui, key)).filter(r => r.props.color).map(r => r.text)
+  // Idle: asleep, the z coming and going.
+  const first = await rows('crab-idle')
+  expect(first).toEqual([...TERM_FRAMES.idle.frames[0]!])
+  await ui.advance(TERM_FRAMES.idle.ms + 100)
+  expect(await rows('crab-idle')).toEqual([...TERM_FRAMES.idle.frames[1]!])
+  // A read starts its own crab on its first frame.
+  await $.tool.call({ tool: 'Read', file_path: 'C:/work/demo/app.ts' } as never)
+  await clock.advance(200)
+  expect(await rows('crab-read')).toEqual([...TERM_FRAMES.read.frames[0]!])
+  await ui.advance(TERM_FRAMES.read.ms + 100)
+  expect(await rows('crab-read')).toEqual([...TERM_FRAMES.read.frames[1]!])
+  await ui.unmount()
 })

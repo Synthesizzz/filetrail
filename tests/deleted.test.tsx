@@ -66,6 +66,8 @@ test('a file Claude deletes with rm is kept in its turn, its text as removed lin
   await clock.advance(200)
   // The tree drops the row; the card says what happened, and the touched list keeps it.
   expect(await ui.find({ key: rowKey('C:/work/demo/src/a.ts') })).toBeUndefined()
+  // A touched row types itself in on its own frame clock.
+  await ui.advance(500)
   expect(await rowText(ui, touchedKey('C:/work/demo/src/a.ts'))).toMatch(/a\.ts.*Deleted/)
   await $.turn.complete({ ...DONE, turnId: 't1' } as never)
   await clock.advance(1000)
@@ -94,6 +96,8 @@ test('a file the person deletes outside a turn is kept as deleted by you, in a t
   expect(turn.prompt).toBe('Deleted outside Claude')
   // Untracked (no repo here): no copy to be had once it is gone.
   expect(turn.steps.map(s => [s.tool, s.rel, s.note])).toEqual([['Delete', 'src/b.ts', 'deleted by you · no copy kept']])
+  // A touched row types itself in on its own frame clock.
+  await ui.advance(500)
   expect(await rowText(ui, touchedKey('C:/work/demo/src/b.ts'))).toMatch(/b\.ts.*Deleted by you/)
   // Seen again and again, it is recorded once.
   await tool(ui, 'refresh')

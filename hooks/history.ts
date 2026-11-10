@@ -107,6 +107,14 @@ export function deleteStep(path: string, root: string, text: string | null, by: 
   return { ...step({ id, path: normPath(path), rel: relTo(root, normPath(path)), tool: 'Delete', note, line: null, at }, text ?? '', ''), status: 'ok' }
 }
 
+/**
+ * A file a shell command shrank or overwrote, as a step: the diff from the text before to the
+ * text after, so the removed lines are a copy of the old text, capped as any step's diff is.
+ */
+export function changeStep(path: string, root: string, before: string, after: string, note: string, at: number, id: string): Step {
+  return { ...step({ id, path: normPath(path), rel: relTo(root, normPath(path)), tool: 'Bash', note, line: null, at }, before, after), status: 'ok' }
+}
+
 /** What `next(e)` of a tool call resolved to, as a step status. */
 export function outcomeOf(result: unknown): StepStatus {
   if (!result || typeof result !== 'object') return 'ok'
@@ -115,8 +123,17 @@ export function outcomeOf(result: unknown): StepStatus {
   return 'ok'
 }
 
+/** Turns of blocked calls alone kept per project, apart from the MAX_TURNS of edits: they never push an edit turn out. */
+export const MAX_BLOCKED_ONLY = 10
+
+const blockedOnly = (t: Turn) => !t.steps.length && !!t.blocked?.length
+
 export function addTurn(turns: readonly Turn[], turn: Turn, max = MAX_TURNS): Turn[] {
-  return [...turns.filter(t => t.id !== turn.id), turn].slice(-max)
+  const all = [...turns.filter(t => t.id !== turn.id), turn]
+  const onlyKept = new Set(all.filter(blockedOnly).slice(-MAX_BLOCKED_ONLY))
+  const kept = all.filter(t => !blockedOnly(t) || onlyKept.has(t))
+  let over = kept.filter(t => !blockedOnly(t)).length - max
+  return kept.filter(t => (over > 0 && !blockedOnly(t) ? (over--, false) : true))
 }
 
 export function byteSize(value: unknown): number {

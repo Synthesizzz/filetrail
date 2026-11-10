@@ -3,21 +3,23 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, GitActionEntry, GitActionKind, GitIcon, GitInfo, GitStage, Preview, SearchIndex, Tone, TouchedFile, Turn } from '../types'
+import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, StaleMark, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
-import { treeWindow } from './activity'
-import { NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
+import { staleLabel } from './stale'
+import { badgeColors, NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import type { Tool, ToolsProps } from './tools'
+import type { HandleProps } from './handle'
 import { NOW_STYLE, nowCard } from './now-card'
 import { octicon, svgOf } from './octicons'
+import { foldersTo } from './activity'
 import { previewView } from './preview'
 import type { PreviewActions } from './preview'
 import { findFiles } from './search'
-import { editCounts, hasEditsBelow, lower, visibleRows } from './tree'
+import { editCounts, hasEditsBelow, lower, parentOf, visibleRows } from './tree'
 
 type Els = ReturnType<EngineInterface['ui']['resolve']>
 /** Rows drawn at most; a longer tree says how many it left out. */
@@ -42,10 +44,10 @@ export type FilesActions = {
   toggleGitLog: () => void
   /** Lists every touched file in the card, or only the latest few again. */
   toggleTouched: () => void
-  /** Moves the tree a page up (-1) or down (1) under the head, holding the follow a while. */
-  page: (dir: -1 | 1) => void
-  /** Ends a hold of the follow and goes to the file Claude touched meanwhile. */
-  backToClaude: () => void
+  /** Shows the whole tree, or only the way down to this turn's files. */
+  setMode: (mode: TreeMode) => void
+  /** From the Now tree, a folder pressed: the whole tree, opened down to it. */
+  openInAll: (dir: Entry) => void
   /** Lists the open folders again, reads git again and rebuilds the search's file list. */
   refresh: () => void
   /** Leaves dotfiles out of the tree, or shows them again. */
@@ -170,7 +172,7 @@ function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry
   const chip = (key: string, runs: Run[], icon?: { name: GitIcon; color: string; alt: string }) => {
     const drawn = icon && Svg ? octicon(icon.name, icon.color, icon.alt) : null
     return (
-      <Box key={key} flexDirection="row" alignItems="center" backgroundColor={CHIP_BG} flexShrink={1} minWidth={0}>
+      <Box key={key} flexDirection="row" alignItems="center" {...(Svg ? { backgroundColor: CHIP_BG } : {})} flexShrink={1} minWidth={0}>
         {drawn && Svg ? <Text>{NBSP}</Text> : null}
         {drawn && Svg ? <Svg source={drawn.source} alt={drawn.alt} width={drawn.width} height={drawn.height} /> : null}
         <Box key={`${key}-words`} flexShrink={1} minWidth={0}>
@@ -236,6 +238,28 @@ export function gitLetter(code: string): string {
 
 /** The folder colour, filetree's accent: a blue that reads on light and dark backgrounds. */
 export const FOLDER_COLOR = '#5b9bd5'
+/**
+ * A folder marker's colour by its place among the folders beside it, so neighbours always
+ * differ: the first filetree's blue, then teal, violet, amber and rose, round again past
+ * five (seen live: by depth, the folders side by side at the top all came out one blue).
+ * Soft and mid-dark, for light and dark panes alike; the folder's name keeps git's colour.
+ */
+export const FOLDER_COLORS = [FOLDER_COLOR, '#3fb8af', '#9b87f5', '#d9a441', '#d97a9a'] as const
+
+/** The colour of a folder's ■, the `index`-th folder (from 0) in its parent's listing. */
+export function folderColor(index: number): string {
+  return FOLDER_COLORS[index % FOLDER_COLORS.length]!
+}
+
+/**
+ * Each folder's place among the folders of its parent (lower-cased path to index), from the
+ * listings: the same in the All tree and in Now, whatever of its siblings Now leaves out.
+ */
+export function folderIndexes(listing: Readonly<Record<string, Entry[]>>): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const entries of Object.values(listing)) entries.filter(e => e.kind === 'dir').forEach((e, k) => out.set(lower(e.path), k))
+  return out
+}
 /** The selected row's fill: filetree's selection grey, at a third so the text stays legible in either theme. */
 export const SELECTED_BG = '#6b728055'
 
@@ -258,11 +282,36 @@ export const GIT_HEX = {
   add: '#98c379', del: '#e06c75', muted: '#808a96',
 } as const
 
-/** A file's kind as a short badge: its extension, upper-cased, three letters at most. */
+/**
+ * A file type's colour, for the marker before its name (the name's own colour is git's):
+ * close to the colours editors and GitHub give these languages, each mid-dark enough to
+ * read on a light and a dark pane alike.
+ */
+const TYPE_COLORS: [readonly string[], string][] = [
+  [['ts', 'tsx', 'mts', 'cts'], '#4f8fd6'],
+  [['js', 'jsx', 'mjs', 'cjs'], '#d4a017'],
+  [['py', 'pyi'], '#2bb3a3'],
+  [['md', 'mdx', 'txt', 'rst'], '#7c8db5'],
+  [['json', 'jsonc', 'yml', 'yaml', 'toml'], '#e69500'],
+  [['css', 'scss', 'less'], '#e0569b'],
+  [['html', 'htm'], '#e8743b'],
+  [['sql'], '#9b6bd6'],
+  [['ipynb'], '#f37726'],
+]
+const TYPE_COLOR: Record<string, string> = Object.fromEntries(TYPE_COLORS.flatMap(([exts, c]) => exts.map(x => [x, c])))
+
+/** The colour of a file's type, by its extension; undefined for one not listed (its marker stays grey). */
+export function typeColor(path: string): string | undefined {
+  const name = path.split('/').pop() ?? path
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? TYPE_COLOR[name.slice(dot + 1).toLowerCase()] : undefined
+}
+
+/** A file's kind as a badge: its whole extension, upper-cased ("IPYNB", not "IPY"). */
 export function badgeOf(path: string): string {
   const name = path.split('/').pop() ?? path
   const dot = name.lastIndexOf('.')
-  return dot > 0 ? name.slice(dot + 1, dot + 4).toUpperCase() : 'TXT'
+  return dot > 0 ? name.slice(dot + 1).toUpperCase() : 'TXT'
 }
 
 /**
@@ -271,21 +320,34 @@ export function badgeOf(path: string): string {
  * Claude is at it). A click goes to it in the tree, a double-click shows it, a
  * right-click copies its path.
  */
-/** Touched files shown before "+N more": the card stays short so the tree keeps the room. */
+/** Touched files shown before "+N more", until the card's handle is dragged: the card stays short so the tree keeps the room. */
 export const TOUCHED_SHOWN = 3
+/** The most touched files kept, and so the most the handle can show. */
+export const TOUCHED_MAX = 8
+/** A flagged file's word: warning yellow, as History's "not applied". */
+const FLAG_COLOR = '#f59e0b'
+/** Before the words that say what changed a file Claude read. */
+const STALE_MARK = 'Δ'
 
-function touchedSection(els: Els, root: string, touched: readonly TouchedFile[], flash: Readonly<Record<string, Tone>>, open: boolean, actions: FilesActions) {
+/** `rows`: how many touched files show before "+N more", as the card's handle left it. */
+function touchedSection(els: Els, root: string, touched: readonly TouchedFile[], flash: Readonly<Record<string, Tone>>, open: boolean, actions: FilesActions, rows = TOUCHED_SHOWN, stale: Readonly<Record<string, StaleMark>> = {}) {
   const { Box, Text, Button } = els
-  const more = touched.length - TOUCHED_SHOWN
+  const more = touched.length - rows
   const Client = 'Client' in els ? els.Client : undefined
+  // No Svg is the terminal: it paints a translucent fill opaque, so its badges are solid.
+  const solid = svgOf(els) === undefined
   if (!touched.length) return []
+  // The handle along the card's bottom border: held and dragged, it previews the size; let go, the list takes it.
+  const handle = Client
+    ? [<Client key="card-handle" module="./handle.tsx" width="100%" props={{ rows: Math.min(rows, touched.length), max: Math.min(TOUCHED_MAX, touched.length), names: touched.slice(0, TOUCHED_MAX).map(f => splitPath(relTo(root, f.path)).name) } satisfies HandleProps} />]
+    : []
   return [
     <Box key="touched" flexDirection="column" gap="xs">
       <Box key="touched-head" flexDirection="row" justifyContent="space-between">
         <Text size="caption" weight="semibold" dimColor>{`TOUCHED · ${touched.length}`}</Text>
         {more > 0 ? <Button key="touched-more" label={open ? 'fewer' : `+${more} more`} plain dimColor onPress={() => actions.toggleTouched()} /> : null}
       </Box>
-      {(open ? touched : touched.slice(0, TOUCHED_SHOWN)).map(f => {
+      {(open ? touched : touched.slice(0, rows)).map(f => {
         const key = `touched-${lower(f.path)}`
         const { name, dir } = splitPath(relTo(root, f.path))
         const now = flash[lower(f.path)]
@@ -294,14 +356,21 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
         // text it had kept there. Its word says who deleted it.
         const gone = f.tone === 'delete'
         const did = gone && f.by === 'you' ? 'deleted by you' : style.did
+        const badgeColor = typeColor(f.path) ?? GIT_HEX.muted
         const segs: Seg[] = [
-          { t: ` ${badgeOf(f.path)} `, c: GIT_HEX.changed, bg: '#e5c07b22', b: true },
-          { t: `${NNBSP}${name}`, name: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
+          // The badge takes the file type's colour, as the tree's marker does; grey for a type not listed.
+          { t: ` ${badgeOf(f.path)} `, ...badgeColors(solid, badgeColor, `${badgeColor}22`), b: true },
+          { t: `${NNBSP}${name}`, name: true, ext: true, b: true, ...(now ? { c: style.color, sh: TONE_SHIMMER[now] } : {}) },
           // The folder gives way before the name when the row is short (seen live: "notes.…" beside a whole folder).
           ...(dir ? [{ t: `${NNBSP}${dir}`, dim: true, opt: true }] : []),
-          now
-            ? { t: ` ${gone && f.by === 'you' && now === 'delete' ? 'Deleted by you' : style.pill} `, c: style.color, bg: style.fill, b: true, right: true }
-            : { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true },
+          // A file read and changed since: what changed it, in warning yellow.
+          ...(f.tone === 'read' && stale[lower(f.path)] ? [{ t: `${NNBSP}${STALE_MARK} ${staleLabel(stale[lower(f.path)]!.by)}`, c: FLAG_COLOR }] : []),
+          // A shell command shrank or overwrote it: the flag's word in warning yellow, in place of the pill or "Edited".
+          f.flag
+            ? { t: ` ${f.flag} `, c: FLAG_COLOR, b: true, right: true }
+            : now
+              ? { t: ` ${gone && f.by === 'you' && now === 'delete' ? 'Deleted by you' : style.pill} `, ...badgeColors(solid, style.color, style.fill), b: true, right: true }
+              : { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true },
         ]
         if (Client) {
           rowPresses.set(key, () => (gone ? actions.history(f.path) : actions.reveal(f.path)))
@@ -309,11 +378,13 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
           rowCopies.set(key, (full, surface) => actions.copy(f.path, full, surface))
           // Monospace, as the tree's rows: the row fits itself by counting cells (seen live: a
           // proportional name was cut short with room to spare).
-          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true } satisfies RowProps} />
+          // A touched file types itself in as it joins the list (the handle let it in, or Claude touched it).
+          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, reveal: true } satisfies RowProps} />
         }
         return <Text key={key}>{segs.map(s => <Text {...(s.c ? { color: s.c } : {})} {...(s.dim ? { dimColor: true } : {})}>{s.t}</Text>)}</Text>
       })}
     </Box>,
+    ...handle,
   ]
 }
 
@@ -328,13 +399,19 @@ export function statusColor(code: string): string | undefined {
 export function filesView(
   els: Els, root: string, listing: Readonly<Record<string, Entry[]>>, files: FilesView,
   git: GitInfo | null, turns: readonly Turn[], flash: Readonly<Record<string, Tone>>,
-  last: { path: string; tone: Tone } | null, actions: FilesActions, width = 60,
+  last: { path: string; tone: Tone; at?: number } | null, actions: FilesActions, width = 60,
   searchIndex: SearchIndex | null = null, gitLog: readonly GitActionEntry[] = [], preview: Preview | null = null,
   touched: readonly TouchedFile[] = [],
-  /** Tree rows the pane has room for under its head; null draws them all. */
-  fit: number | null = null,
-  /** The push or merge the card's crab acts out, or null. */
-  stage: GitStage | null = null,
+  /** What the card's crab acts out besides a file (a push, a search, tests…), or null. */
+  stage: Stage | null = null,
+  /** A main-loop turn is running, for the crab's thinking. */
+  working = false,
+  /** This turn's files (the last turn's, once it ended), for the Now tree. */
+  turnFiles: readonly string[] = [],
+  /** This session's test runs: the last stays on the card after the chip goes. */
+  tests: TestRuns | null = null,
+  /** Files Claude read that changed since, by lower-cased path. */
+  stale: Readonly<Record<string, StaleMark>> = {},
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -342,22 +419,34 @@ export function filesView(
   // Only surfaces that take typing have an Input (terminal, desktop); elsewhere the search box is left out.
   const Input = 'Input' in els ? els.Input : undefined
   const Client = 'Client' in els ? els.Client : undefined
+  // No Svg is the terminal: it paints a translucent fill opaque, so the selected row gets a marker, not the fill.
+  const terminal = svgOf(els) === undefined
   const name = root.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? root
   const counts = editCounts(turns)
-  const rows = visibleRows(root, listing, files.expanded, files.hideDots === true)
+  // Now: the folders down to this turn's files, opened, and those files, with everything in the
+  // folder Claude is in now (its latest file's) so its neighbours show; All: the tree as opened.
+  const now = files.mode === 'now'
+  const nowFiles = new Set(turnFiles.map(lower))
+  const nowDirs = new Set(turnFiles.flatMap(p => (foldersTo(root, p) ?? []).map(lower)))
+  const workDir = turnFiles.length ? lower(parentOf(turnFiles[turnFiles.length - 1]!)) : null
+  const rows = now
+    ? visibleRows(root, listing, [...nowDirs], files.hideDots === true).filter(r => lower(parentOf(r.entry.path)) === workDir
+      || (r.entry.kind === 'dir' ? nowDirs : nowFiles).has(lower(r.entry.path)))
+    : visibleRows(root, listing, files.expanded, files.hideDots === true)
   const shown = rows.slice(0, MAX_ROWS)
-  // The tree scrolls under the head on its own first row (files.top), the head staying put.
-  // The Following paused line, when shown, takes one of the tree's rows.
-  const win = treeWindow(shown.length, files.top ?? 0, (fit ?? shown.length) - (fit !== null && files.away ? 1 : 0))
+  const folderAt = folderIndexes(listing)
+  // Every folder above a lit file shimmers with it, in its tone, so Claude's place reads from the top.
+  const litAbove = new Map<string, Tone>()
+  for (const [path, tone] of Object.entries(flash)) for (const d of foldersTo(root, path) ?? []) if (!litAbove.has(lower(d))) litAbove.set(lower(d), tone)
   const selected = files.selected ? lower(files.selected) : null
   const selectedSteps = files.selected ? stepCount(turns, files.selected) : 0
   const tools: (Tool & { run: () => void })[] = [
-    { id: 'refresh', glyph: '↻', hint: 'Refresh folders and git', run: () => actions.refresh() },
+    { id: 'refresh', glyph: '↻', hint: 'Refresh folders and git', done: 'Refreshed', run: () => actions.refresh() },
     files.hideDots
-      ? { id: 'dots', glyph: '○', hint: 'Show dotfiles', run: () => actions.toggleDots() }
-      : { id: 'dots', glyph: '◉', hint: 'Hide dotfiles', run: () => actions.toggleDots() },
-    { id: 'collapse', glyph: '⊟', hint: 'Close all folders', run: () => actions.collapseAll() },
-    ...(files.selected !== null ? [{ id: 'go-selected', glyph: '⌖', hint: 'Go to the selected file', run: () => actions.goToSelected() }] : []),
+      ? { id: 'dots', glyph: '○', hint: 'Show dotfiles', done: 'Dotfiles shown', run: () => actions.toggleDots() }
+      : { id: 'dots', glyph: '◉', hint: 'Hide dotfiles', done: 'Dotfiles hidden', run: () => actions.toggleDots() },
+    { id: 'collapse', glyph: '⊟', hint: 'Close all folders', done: 'Folders closed', run: () => actions.collapseAll() },
+    ...(files.selected !== null ? [{ id: 'go-selected', glyph: '⌖', hint: 'Go to the selected file', done: 'Back to the file', run: () => actions.goToSelected() }] : []),
   ]
   for (const t of tools) toolPresses.set(t.id, t.run)
 
@@ -368,7 +457,7 @@ export function filesView(
       {/* As filetree heads its tree: the folder, then the branch and its upstream with the repo's changes at the right. */}
       {/* One card for the top of the pane: the folder, its toolbar, the branch and git as chips,
           then what Claude is doing right now and the files it touched this session. */}
-      {nowCard(els, root, listing, last, flash, touchedSection(els, root, touched, flash, files.touchedOpen === true, actions), [
+      {nowCard(els, root, listing, last, flash, touchedSection(els, root, touched, flash, files.touchedOpen === true, actions, files.touchedRows ?? TOUCHED_SHOWN, stale), [
           <Box key="name-line" flexDirection="row" gap={1} minWidth={0}>
             <Box key="name-box" flexShrink={1} minWidth={0}>
               <Text weight="semibold" color={FOLDER_COLOR} wrap="truncate-end">{name}</Text>
@@ -376,7 +465,7 @@ export function filesView(
             {/* filetree's header buttons, its plain Unicode glyphs. A Client draws them where it can, so
                 hovering one says what it does (a desktop Button has no tooltip); Buttons elsewhere. */}
             {Client
-              ? <Client key="tree-tools" module="./tools.tsx" flexGrow={1} props={{ tools: tools.map(({ id, glyph, hint }) => ({ id, glyph, hint })) } satisfies ToolsProps} />
+              ? <Client key="tree-tools" module="./tools.tsx" flexGrow={1} props={{ tools: tools.map(({ id, glyph, hint, done }) => ({ id, glyph, hint, ...(done ? { done } : {}) })) } satisfies ToolsProps} />
               : (
                 <Box key="tree-tools" flexDirection="row" gap={1} flexGrow={1} justifyContent="flex-end">
                   {tools.map(t => <Button key={t.id} label={t.glyph} plain dimColor onPress={t.run} />)}
@@ -384,7 +473,7 @@ export function filesView(
               )}
           </Box>,
         branchChips(els, git, gitLog, files.gitOpen === true, actions),
-      ], width < NARROW_COLUMNS, stage)}
+      ], width < NARROW_COLUMNS, stage, working, tests)}
       {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">
@@ -413,43 +502,53 @@ export function filesView(
       {/* A file shown in the pane takes the tree's place; ← files brings the tree back as it was. */}
       {preview ? previewView(els, root, preview, actions.previewing, flash[lower(preview.path)] ? TONE_COLOR[flash[lower(preview.path)]!] : undefined) : searching ? searchResults(els, query, searchIndex, actions) : (
       <Box key="tree" flexDirection="column">
+      {/* The tree's two views: the whole project, or the way down to what Claude touches now. */}
+      <Box key="tree-mode" flexDirection="row" gap={1} marginBottom={1}>
+        <Button key="mode-all" label="All" plain {...(now ? { dimColor: true } : { variant: 'primary' as const })} onPress={() => actions.setMode('all')} />
+        <Button key="mode-now" label="Now" plain {...(now ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => actions.setMode('now')} />
+      </Box>
       {!(lower(root) in listing) && <Text dimColor>Reading the folder…</Text>}
-      {lower(root) in listing && rows.length === 0 && <Text dimColor>This folder is empty.</Text>}
-      {/* Claude moved on while the person was scrolling the tree: the follow waited. */}
-      {files.away ? (
-        <Box key="follow-paused" flexDirection="row" gap={1}>
-          <Text dimColor>Following paused</Text>
-          <Button key="back-to-claude" label="⌖ Back to Claude" plain onPress={() => actions.backToClaude()} />
-        </Box>
-      ) : null}
-      {/* The tree's scroll marks, in place of a scrollbar: a press moves it a page. */}
-      {win.above ? <Button key="tree-above" label={`▲ ${win.above} above`} plain dimColor onPress={() => actions.page(-1)} /> : null}
-      {shown.slice(win.start, win.end).map(({ entry, depth, isOpen }) => {
+      {lower(root) in listing && rows.length === 0 && <Text dimColor>{now ? 'Nothing touched this turn yet: Claude\'s files show here as it reads and edits them.' : 'This folder is empty.'}</Text>}
+      {/* Every row is drawn: the pane scrolls like a page when the tree is long. */}
+      {shown.map(({ entry, depth, isOpen }) => {
         const isDir = entry.kind === 'dir'
         const code = isDir ? dirStatus(git, entry.path) : fileStatus(git, entry.path)
         const tone = flash[lower(entry.path)]
+        // A folder above Claude's file shimmers as it does, its word left to the file.
+        const above = isDir && !tone ? litAbove.get(lower(entry.path)) : undefined
         const color = tone ? TONE_COLOR[tone] : statusColor(code)
         const edits = isDir ? 0 : counts.get(lower(entry.path)) ?? 0
         const lines = isDir ? null : lineCounts(git, entry.path)
         const isSelected = lower(entry.path) === selected
-        const key = `row-${lower(entry.path)}`
-        const press = () => (isDir ? actions.toggle(entry) : actions.select(entry))
+        // A row that shimmers is drawn by a fresh instance, keyed by its tone: a surface's
+        // clock may only start as an instance first draws (seen live: a row on show before
+        // Claude touched it never shimmered, while one drawn lit did).
+        const shimmer = tone ?? above
+        const key = `row-${lower(entry.path)}${shimmer ? `~${shimmer}` : ''}`
+        const press = () => (isDir ? (now ? actions.openInAll(entry) : actions.toggle(entry)) : actions.select(entry))
         // The desktop draws no `inverse`: a selected file also gets a marker and bold, which every surface shows.
         // The indent is non-breaking spaces in a monospace run: the desktop collapses leading plain spaces,
         // and a proportional font would set the arrow and the blank slot at different widths.
         // As filetree draws on the desktop (its Nerd Font icons have no glyph there): a blue
-        // ■ for a folder, a · for a file; a dotfile's name is dimmed unless git or Claude colours it.
+        // ■ for a folder in its place's colour, a • for a file in its type's colour (grey when not listed, the name
+        // keeping git's colour); a dotfile's name and marker are dimmed unless git or Claude colours it.
         const dotfile = entry.name.startsWith('.')
         const segs: Seg[] = [
           // The selected row is filled where a Client draws it; a marker stands in elsewhere.
-          { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected && !Client ? '›' : NBSP) + NNBSP, mono: true },
-          { t: (isDir ? '■' : '·') + NNBSP, ...(isDir ? { c: FOLDER_COLOR } : {}), dim: !isDir || dotfile },
+          { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected && (!Client || terminal) ? '›' : NBSP) + NNBSP, mono: true },
+          isDir ? { t: '■' + NNBSP, c: folderColor(folderAt.get(lower(entry.path)) ?? 0), dim: dotfile }
+            : { t: '•' + NNBSP, ...(!dotfile && typeColor(entry.path) ? { c: typeColor(entry.path)! } : { dim: true }) },
           {
             t: entry.name + (isDir ? '/' : ''), name: true,
-            ...(color ? { c: color } : dotfile ? { dim: true } : {}),
-            ...(tone || isSelected ? { b: true } : {}), ...(tone ? { sh: TONE_SHIMMER[tone] } : {}),
+            // git's colour (or Claude's) when it has one; else a folder's name takes its marker's
+            // colour, and a file's its folder's (a file at the root keeps the plain colour).
+            ...(color ? { c: color } : dotfile ? { dim: true } : isDir ? { c: folderColor(folderAt.get(lower(entry.path)) ?? 0) }
+              : folderAt.has(lower(parentOf(entry.path))) ? { c: folderColor(folderAt.get(lower(parentOf(entry.path)))!) } : {}),
+            ...(tone || isSelected ? { b: true } : {}), ...(shimmer ? { sh: TONE_SHIMMER[shimmer] } : {}),
           },
         ]
+        // Read by Claude and changed since: a Δ and what changed it.
+        if (!isDir && stale[lower(entry.path)]) segs.push({ t: `${NNBSP}${STALE_MARK} ${staleLabel(stale[lower(entry.path)]!.by)}`, c: FLAG_COLOR })
         if (tone) segs.push({ t: `${NNBSP}· ${TONE_WORD[tone]}`, c: TONE_COLOR[tone], b: true, sh: TONE_SHIMMER[tone] })
         else if (last && last.path === lower(entry.path)) segs.push({ t: `${NNBSP}◂`, c: TONE_COLOR[last.tone] })
         // At the right edge, as VS Code's explorer does: Claude's edits, the lines changed, then
@@ -475,7 +574,7 @@ export function filesView(
           rowCopies.set(key, (full, surface) => actions.copy(entry.path, full, surface))
           // As wide as the pane, so the row knows its room and fits itself (it never wraps).
           // Monospace, as filetree's terminal rows are: the dates and badges line up in a column.
-          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, ...(isSelected ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />
+          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, ...(isSelected && !terminal ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />
         }
         // Surfaces without a Client: a plain Button, which may not paint the colours.
         return (
@@ -484,7 +583,6 @@ export function filesView(
           </Button>
         )
       })}
-      {win.below ? <Button key="tree-below" label={`▼ ${win.below} below`} plain dimColor onPress={() => actions.page(1)} /> : null}
       {rows.length > shown.length && <Text dimColor>… {rows.length - shown.length} more rows (close a folder to see them)</Text>}
       </Box>
       )}

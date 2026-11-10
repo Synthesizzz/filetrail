@@ -184,3 +184,54 @@ export function deleteTargets(command: string, root: string): string[] {
   }
   return out
 }
+
+/** Package managers whose `test` script runs the tests (`npm test`, `npm run test:unit`, `pnpm t`). */
+const SCRIPT_RUNNERS = new Set(['npm', 'pnpm', 'yarn', 'bun'])
+/** Test runners called by name, directly or through npx and the like. */
+const TEST_RUNNERS = new Set(['jest', 'vitest', 'mocha', 'ava', 'pytest', 'phpunit', 'rspec'])
+/** Tools whose `test` subcommand runs the tests (`go test`, `cargo test`, `dbt test`). */
+const TEST_SUBCOMMANDS = new Set(['go', 'cargo', 'dotnet', 'mvn', 'gradle', 'gradlew', 'dbt', 'deno'])
+
+/** Whether one command's words run tests. */
+export function runsTests(words: readonly string[]): boolean {
+  const prog = programOf(words[0] ?? '')
+  const args = words.slice(1)
+  if (SCRIPT_RUNNERS.has(prog)) return args[0] === 'test' || args[0] === 't' || (args[0] === 'run' && /^test(:|$)/.test(args[1] ?? ''))
+  if (prog === 'npx' || prog === 'pnpx' || prog === 'bunx') {
+    const tool = programOf(args.find(a => !a.startsWith('-')) ?? '')
+    return TEST_RUNNERS.has(tool) || (tool === 'playwright' && args.includes('test'))
+  }
+  if (TEST_RUNNERS.has(prog)) return true
+  if (prog === 'python' || prog === 'python3' || prog === 'py') {
+    const m = args.indexOf('-m')
+    return m >= 0 && (args[m + 1] === 'pytest' || args[m + 1] === 'unittest')
+  }
+  if (TEST_SUBCOMMANDS.has(prog)) return args[0] === 'test'
+  // `claude plugin test`, as this repo runs its own.
+  return prog === 'claude' && args[0] === 'plugin' && args[1] === 'test'
+}
+
+/** Commands a search's output is piped through without making it anything but a search. */
+const FILTERS = new Set(['head', 'tail', 'sort', 'uniq', 'wc', 'less', 'more', 'cut', 'tr', 'select-object', 'sort-object', 'measure-object'])
+
+/** What a shell command mostly does, for the crab: running tests, searching, or anything else. */
+export type CommandKind = 'test' | 'search' | 'command'
+
+/**
+ * The kind of a shell command (Bash or PowerShell), from its words: `test` when any
+ * part runs a test runner, `search` when every part searches or lists, `command` else.
+ */
+export function commandKind(command: string): CommandKind {
+  const parts = splitCommands(command).map(s => tokenize(s)).filter((w): w is string[] => !!w && w.length > 0)
+    .map(w => { const v = [...w]; while (v.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(v[0]!)) v.shift(); return v }).filter(w => w.length > 0)
+  if (parts.some(runsTests)) return 'test'
+  // A search may be piped through filters: `rg x | head`, `find . -name y | sort`.
+  if (parts.length && SEARCHERS.has(programOf(parts[0]![0]!)) && parts.slice(1).every(w => SEARCHERS.has(programOf(w[0]!)) || FILTERS.has(programOf(w[0]!)))) return 'search'
+  return 'command'
+}
+
+/** A command as the card names it: its first line, cut to `max` characters. */
+export function shortCommand(command: string, max = 40): string {
+  const line = command.trim().split(/\r?\n/)[0] ?? ''
+  return line.length > max ? line.slice(0, max - 1) + '…' : line
+}
