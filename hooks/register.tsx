@@ -7,6 +7,7 @@ import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, He
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
+import { agentsView, tabLabel } from './agents-view'
 import { called, finished, joined, reconciled, resumed } from './helpers'
 import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
 import { blockedOf, callText } from './blocked'
@@ -908,7 +909,7 @@ async function refreshPreview($: EngineInterface, path: string): Promise<void> {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({ name: 'trail', description: 'Show the filetrail pane (file tree and edit history); args: replay, export, clear' })
+    await $.command.register({ name: 'trail', description: 'Show the filetrail pane (file tree, edit history and helpers); args: agents, replay, export, clear' })
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
     // A reload forgets the running turn's steps, so a Now row left in state would never be saved.
     await update($, live, () => null)
@@ -1143,6 +1144,12 @@ export const register: Register = on => {
       const opened = await openPane($, true)
       return { text: opened.isPlaced ? 'filetrail opened.' : `filetrail is open but not drawn: ${opened.reason}` }
     }
+    if (args === 'agents') {
+      await syncHelpers($).catch(err => $.ui.log(`filetrail: helpers were not read: ${String(err)}`))
+      await update($, tab, () => 'agents')
+      const opened = await openPane($, true)
+      return { text: opened.isPlaced ? 'filetrail opened on the helpers.' : `filetrail is open but not drawn: ${opened.reason}` }
+    }
     if (args === 'export') return { text: await exportHistory($) }
     if (args === 'replay') {
       const latest = (await read($, history)).filter(t => t.steps.length || !t.blocked?.length).at(-1)
@@ -1159,7 +1166,7 @@ export const register: Register = on => {
       const n = await clearHistory($)
       return { text: `filetrail: cleared ${n} turn${n === 1 ? '' : 's'} of history for ${projectName(root)}.` }
     }
-    return { text: 'filetrail: /trail opens the pane, /trail replay steps through the last turn\'s edits, /trail export writes the history as Markdown, /trail clear deletes this project\'s history.' }
+    return { text: 'filetrail: /trail opens the pane, /trail agents shows the helpers Claude started, /trail replay steps through the last turn\'s edits, /trail export writes the history as Markdown, /trail clear deletes this project\'s history.' }
   })
 
   // The band above the prompt: the offer to replay the last turn that changed files,
@@ -1232,6 +1239,12 @@ export const register: Register = on => {
     const running = await read($, live)
     const turnsAll = withLive(await read($, history), running)
     const go = (to: Tab) => () => void update($, tab, () => to)
+    // The engine's own list is read as the tab opens, so a helper this module missed shows too.
+    const goAgents = () => fire($, 'opening the agents', async () => {
+      await syncHelpers($).catch(err => $.ui.log(`filetrail: helpers were not read: ${String(err)}`))
+      await update($, tab, () => 'agents')
+    })
+    const mates = await read($, crew)
 
     return (
       <Box flexDirection="column">
@@ -1242,9 +1255,22 @@ export const register: Register = on => {
           <Button key="tab-history" label="History" hotkey="h"
             {...(current === 'history' ? { variant: 'primary' as const } : { dimColor: true })}
             onPress={go('history')} />
+          {/* Shown once a helper has started this session, or while the tab is open. */}
+          {mates.length || current === 'agents'
+            ? <Button key="tab-agents" label={tabLabel(mates)} hotkey="a"
+                {...(current === 'agents' ? { variant: 'primary' as const } : { dimColor: true })}
+                onPress={goAgents} />
+            : null}
         </Box>
         <Box key="body" flexDirection="column" marginTop={1}>
-          {current === 'files'
+          {current === 'agents'
+            ? agentsView(els, mates, await $.clock.now(), root, {
+                view: path => fire($, 'showing the file', async () => {
+                  await update($, tab, () => 'files')
+                  await loadPreview($, path, 0)
+                }),
+              })
+            : current === 'files'
             ? filesView(els, root, await read($, listing), await read($, files), await read($, git), turnsAll, await read($, flash), await read($, last), {
                 toggle: dir => fire($, 'opening a folder', async () => {
                   const k = lower(dir.path)
@@ -1302,6 +1328,7 @@ export const register: Register = on => {
                     if (cur) await loadPreview($, cur.path, page)
                   }),
                 },
+                agents: goAgents,
                 goToSelected: () => fire($, 'going to the selected file', async () => {
                   const at = (await read($, files)).selected
                   if (at) await reveal($, at, true)
@@ -1310,7 +1337,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale), mates)
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

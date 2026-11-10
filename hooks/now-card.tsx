@@ -84,6 +84,8 @@ export function nowCard(
   working = false,
   /** The session's test runs: the last stays under the row once the chip has gone. */
   tests: TestRuns | null = null,
+  /** The helpers at work, as a short strip under the row (null when none works). */
+  helpers: RenderElement | null = null,
 ) {
   const { Box, Text } = els
   const Svg = svgOf(els)
@@ -137,6 +139,8 @@ export function nowCard(
     </Box>
     {/* The session's last test run, kept after the chip is gone; the chip itself is the row's while it shows. */}
     {tests && !(stage && stage.pose === 'test') ? testLine(els, tests) : null}
+    {/* The helpers at work, a press opens the Agents tab. */}
+    {helpers}
     {/* Below the row: the files Claude touched this session. */}
     {sections}
     </Box>

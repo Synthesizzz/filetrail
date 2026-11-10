@@ -3,7 +3,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Preview, Stage, SearchIndex, StaleMark, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Helper, Preview, Stage, SearchIndex, StaleMark, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
@@ -13,6 +13,7 @@ import type { RowProps, Seg } from './row'
 import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
 import type { Tool, ToolsProps } from './tools'
 import type { HandleProps } from './handle'
+import { helperStrip } from './agents-view'
 import { NOW_STYLE, nowCard } from './now-card'
 import { octicon, svgOf } from './octicons'
 import { foldersTo } from './activity'
@@ -62,6 +63,8 @@ export type FilesActions = {
   reveal: (path: string) => void
   /** What the preview's buttons do. */
   previewing: PreviewActions
+  /** Opens the Agents tab. */
+  agents: () => void
 }
 
 /** The search results in place of the tree: file name first, folder dimmed, the best matches on top. */
@@ -412,6 +415,8 @@ export function filesView(
   tests: TestRuns | null = null,
   /** Files Claude read that changed since, by lower-cased path. */
   stale: Readonly<Record<string, StaleMark>> = {},
+  /** This session's helpers: those at work show as a strip on the card. */
+  crew: readonly Helper[] = [],
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -473,7 +478,7 @@ export function filesView(
               )}
           </Box>,
         branchChips(els, git, gitLog, files.gitOpen === true, actions),
-      ], width < NARROW_COLUMNS, stage, working, tests)}
+      ], width < NARROW_COLUMNS, stage, working, tests, helperStrip(els, crew, () => actions.agents()))}
       {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">
