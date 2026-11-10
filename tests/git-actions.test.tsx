@@ -17,6 +17,15 @@ test('gitActionsOf finds git and gh pr actions, with what they name', () => {
   expect(verbs('cd repo; git stash pop')).toEqual(['stash|pop'])
 })
 
+test('gitActionsOf leaves a shell redirect and the file it writes out of the target', () => {
+  expect(verbs('git push origin feat/x 2>&1')).toEqual(['push|origin feat/x'])
+  expect(verbs('git push origin main > out.txt')).toEqual(['push|origin main'])
+  expect(verbs('git push origin main 2> /dev/null')).toEqual(['push|origin main'])
+  expect(verbs('git push origin main 2>/dev/null')).toEqual(['push|origin main'])
+  expect(verbs('git pull &> log.txt')).toEqual(['pull|'])
+  expect(verbs('git push origin main >>log 2>&1')).toEqual(['push|origin main'])
+})
+
 test('gitActionsOf gives each action GitHub\'s icon, and a push or a merge the crab\'s pose', () => {
   const marks = (command: string) => gitActionsOf(command).map(a => `${a.verb}|${a.icon}|${a.pose ?? ''}`)
   expect(marks('git commit -m x && git push')).toEqual(['commit|commit|', 'push|push|push'])
@@ -81,16 +90,34 @@ test('gitActionSegs: running shimmers in its colour, done ticks, failure is red,
   expect(text({ ...base, state: 'ok', target: '', repo: 'filetrail' })).toBe('✓ pushed · filetrail')
 })
 
-const DIRS: Record<string, [string, 'file' | 'dir'][]> = { 'C:\\work\\demo': [['README.md', 'file']] }
+test('the latest git action is a line under the chips, with the time it ran and how many more at its end', async ($, on) => {
+  const { clock } = world(on, { dirs: DIRS })
+  await $.session.start(START)
+  await clock.advance(1000)
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.tool.call({ tool: 'Bash', command: 'git pull' })
+  await $.tool.call({ tool: 'Bash', command: 'git push origin main 2>&1' })
+  const line = await ui.find({ key: 'git-latest' })
+  expect(JSON.stringify(await ui.find({ key: 'chips' }))).not.toContain('pushed')
+  expect(await bar(ui)).toEqual(['✓ pushed origin main'])
+  const times = (await ui.findAll({ type: 'Text' })).filter((t: any) => /^·\u00a0\d\d:\d\d$/.test(String(t.text)))
+  expect(times).toHaveLength(1)
+  expect(JSON.stringify(line)).toContain(String(times[0]!.text))
+  expect(JSON.stringify(line)).toContain('git-more')
+  expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('+1')
+  await ui.unmount()
+})
+
+const DIRS: Record<string, [string, 'file' | 'dir'][]> ={ 'C:\\work\\demo': [['README.md', 'file']] }
 
 /**
- * The git actions on show, as their text: the latest first (a chip beside the branch,
+ * The git actions on show, as their text: the latest first (a line under the chips,
  * a Text, while it is done), then the Client lines (a running one, the older ones).
  */
 async function bar(ui: any): Promise<string[]> {
   const chips: string[] = (await ui.findAll({ type: 'Text' }))
     .map((t: any) => String(t.text ?? ''))
-    .filter((t: string) => /^ [✓✗⊘]/.test(t))
+    .filter((t: string) => /^[✓✗⊘] \S/.test(t))
     .map((t: string) => t.replace(/ /g, ' ').trim())
   const keys = (await ui.findAll({ type: 'Client' })).map((c: any) => c.key).filter((k: string) => k?.startsWith('git-'))
   return [...new Set(chips)].concat(await Promise.all(keys.map((k: string) => rowText(ui, k))))
@@ -114,17 +141,17 @@ test('the git bar shows each action as it came out, the last three kept, until n
   // At rest the bar is one line: the latest action, and how many more are kept.
   await $.tool.call({ tool: 'Bash', command: 'git pull --fail' })
   expect(await bar(ui)).toEqual(['✗ pull failed'])
-  expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('1 more')
+  expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('+1')
 
   await $.tool.call({ tool: 'Bash', command: 'git checkout -b topic && git stash' })
   expect(await bar(ui)).toEqual(['✓ stashed'])
-  expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('2 more')
+  expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('+2')
 
-  // "2 more" shows all kept, oldest first; "fewer" folds them again.
+  // "+2" shows all kept, oldest first; "fewer" folds them again.
   await ui.press({ key: 'git-more' })
   const rows = await bar(ui)
   expect(rows.length).toBe(MAX_ACTIONS)
-  // The latest stays a chip beside the branch; the older ones list under the chips, oldest first.
+  // The latest stays on its line under the chips; the older ones list under the chips, oldest first.
   expect(rows).toEqual(['✓ stashed', '✗ pull failed', '✓ checked out topic'])
   expect((await ui.find({ key: 'git-more' }))?.props?.label).toBe('fewer')
   await ui.press({ key: 'git-more' })

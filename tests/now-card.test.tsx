@@ -103,11 +103,13 @@ test('Claude touched lists the files read and edited, newest first, with a pill 
   expect(rows).toEqual(['touched-c:/work/demo/readme.md', 'touched-c:/work/demo/src/app.ts'])
   // The rows type themselves in on their own frame clock.
   await ui.advance(500)
-  // Only the file Claude is on is lit: the one it left says what was done, unfilled.
+  // Only the file Claude is on is lit: the one it left marks what was done with its tone's
+  // glyph, unfilled, so the name keeps the room (a word took it, seen live: "Committed").
   expect(await rowText(ui, rows[0])).toMatch(/^ MD  README\.md\s+Editing $/)
-  expect(await rowText(ui, rows[1])).toMatch(/^ TS  App\.ts Src\s+Read $/)
-  const pill = (await rowRuns(ui, rows[1])).find(r => r.text === ' Read ')
-  expect(pill?.props.backgroundColor).toBeUndefined()
+  expect(await rowText(ui, rows[1])).toMatch(/^ TS  App\.ts Src\s+◉ $/)
+  const mark = (await rowRuns(ui, rows[1])).find(r => r.text === ' ◉ ')
+  expect(mark?.props).toMatchObject({ color: NOW_STYLE.read.color })
+  expect(mark?.props.backgroundColor).toBeUndefined()
 
   // A click goes to the file in the tree, selected.
   await pressRow(ui, rows[1])
@@ -115,6 +117,22 @@ test('Claude touched lists the files read and edited, newest first, with a pill 
   expect(await ui.find({ key: 'row-c:/work/demo/src/app.ts' })).toBeDefined()
   expect(await ui.find({ key: 'unselect' })).toBeDefined()
   await $.turn.complete({ ...DONE, turnId: 't1' })
+  await ui.unmount()
+})
+
+test('a committed file rests with the commit\'s ✓, not the word', async ($, on) => {
+  const { clock } = world(on, { dirs: { 'C:\\work\\demo': [['index.d.ts', 'file']] }, git: { top: 'C:/work/demo', status: '## main\0', numstat: '', show: 'index.d.ts\n' } })
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
+  await clock.advance(FLASH_MS + 100)
+  await ui.advance(500)
+  const text = await rowText(ui, 'touched-c:/work/demo/index.d.ts')
+  expect(text).toMatch(/index\.d\.ts\s+✓ $/)
+  expect(text).not.toContain('Committed')
+  const mark = (await rowRuns(ui, 'touched-c:/work/demo/index.d.ts')).find(r => r.text === ' ✓ ')
+  expect(mark?.props).toMatchObject({ color: NOW_STYLE.commit.color })
   await ui.unmount()
 })
 

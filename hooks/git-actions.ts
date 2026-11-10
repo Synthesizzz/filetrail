@@ -37,11 +37,24 @@ const GIT_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--name
 
 export type GitActionCall = Verb & { target: string; repo: string }
 
-/** What follows a verb, shown after its word: the plain words, flags and their values left out, clipped. */
+/**
+ * A shell redirect as the tokenizer leaves it: `2>&1`, `>out`, `2>`, `&>`, `>>log`.
+ * Group 1 is a `&1` duplicate, group 2 a file joined to the operator.
+ */
+const REDIRECT = /^(?:\d*|&)(?:>>?|<)(&\d*-?)?(.*)$/
+
+/** What follows a verb, shown after its word: the plain words, flags, their values and redirects left out, clipped. */
 function targetOf(words: readonly string[]): string {
   const plain: string[] = []
   for (let k = 0; k < words.length; k++) {
     const w = words[k]!
+    // A redirect is the shell's, not git's (seen live: "pushed origin feat/x 2>&1"); a bare
+    // operator takes the next word as its file.
+    const redirect = REDIRECT.exec(w)
+    if (redirect) {
+      if (!redirect[1] && !redirect[2]) k++
+      continue
+    }
     if (w === '-m' || w === '-F' || w === '--message' || w === '-b' || w === '-c' || w === '-B') {
       // A new branch is the target of checkout -b / switch -c; a message is not shown.
       if ((w === '-b' || w === '-c' || w === '-B') && words[k + 1]) plain.push(words[k + 1]!)

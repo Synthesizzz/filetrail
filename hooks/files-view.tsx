@@ -8,7 +8,7 @@ import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary }
 import type { DirCounts } from './git'
 import { relTo } from './history'
 import { staleLabel } from './stale'
-import { badgeColors, NARROW_COLUMNS, NBSP, NNBSP, splitPath } from './paths'
+import { badgeColors, clockOf, NARROW_COLUMNS, NBSP, NNBSP, splitPath } from './paths'
 import { rightSlots } from './columns'
 import type { Cell } from './columns'
 import type { RowProps, Seg } from './row'
@@ -266,24 +266,48 @@ function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry
   const latest = log.at(-1)
   const running = latest?.state === 'running'
   const more = log.length - 1
+  // The latest action, done: its icon and words, cut with an ellipsis, then the time it ran.
+  // An action kept from before icons were recorded (state outlives a reload) has none.
+  const done = (a: GitActionEntry) => {
+    const drawn = a.icon && Svg ? octicon(a.icon, actionIconColor(a), a.verb) : null
+    return [
+      drawn && Svg ? <Svg key={`git-${a.id}-icon`} source={drawn.source} alt={drawn.alt} width={drawn.width} height={drawn.height} /> : null,
+      <Box key={`git-${a.id}-words`} flexShrink={1} minWidth={0}>
+        <Text wrap="truncate-end">{text(runs(a))}</Text>
+      </Box>,
+      <Text key={`git-${a.id}-at`} dimColor>{`·${NBSP}${clockOf(a.at)}`}</Text>,
+    ]
+  }
+  const files = outside.length === 1 ? '1 file' : `${outside.length} files`
   return (
     <Box key="branch-chips" flexDirection="column" gap="xs">
       <Box key="chips" flexDirection="row" flexWrap="wrap" gap={1} minWidth={0}>
         {branch}
         {repoChip}
-        {/* Files Claude wrote outside the project (an Edit, Write or NotebookEdit that went through): the count, and a press lists them. */}
-        {outside.length
-          ? (
-            <Box key="chip-outside" flexDirection="row" gap={1} alignItems="center">
-              <Text color="warning">⚠</Text>
-              <Button key="outside-toggle" label={outsideOpen ? 'hide' : `${outside.length} outside`} plain dimColor onPress={() => actions.toggleOutside()} />
-            </Box>
-          )
-          : null}
-        {/* An action kept from before icons were recorded (state outlives a reload) has none. */}
-        {latest && !running ? chip(`git-${latest.id}`, runs(latest), latest.icon ? { name: latest.icon, color: actionIconColor(latest), alt: latest.verb } : undefined) : null}
-        {more > 0 ? <Button key="git-more" label={open ? 'fewer' : `${more} more`} plain dimColor onPress={() => actions.toggleGitLog()} /> : null}
       </Box>
+      {/* Files Claude wrote outside the project (an Edit, Write or NotebookEdit that went
+          through): a line of its own on a faint warning fill, as it is a safety signal; a press lists them. */}
+      {outside.length
+        ? (
+          <Box key="chip-outside" flexDirection="row" gap={1} alignItems="center" minWidth={0} {...(Svg ? { backgroundColor: `${FLAG_COLOR}22`, paddingX: 1 } : {})}>
+            <Box key="outside-words" flexShrink={1} flexGrow={1} minWidth={0}>
+              <Text color="warning" wrap="truncate-end">{`⚠ ${files} written outside the project`}</Text>
+            </Box>
+            <Button key="outside-toggle" label={outsideOpen ? 'hide' : 'show'} plain dimColor onPress={() => actions.toggleOutside()} />
+          </Box>
+        )
+        : null}
+      {/* The latest git action on a line of its own, with how many more are kept at its end. One
+          running is a Client as wide as the space left, for the shimmer. */}
+      {latest
+        ? (
+          <Box key="git-latest" flexDirection="row" gap={1} alignItems="center" minWidth={0}>
+            {running ? <Box key="git-running" flexGrow={1} flexShrink={1} minWidth={0}>{line(latest)}</Box> : done(latest)}
+            {running ? null : <Box key="git-gap" flexGrow={1} />}
+            {more > 0 ? <Button key="git-more" label={open ? 'fewer' : `+${more}`} plain dimColor onPress={() => actions.toggleGitLog()} /> : null}
+          </Box>
+        )
+        : null}
       {outside.length && outsideOpen
         ? (
           <Box key="outside-list" flexDirection="column">
@@ -292,7 +316,6 @@ function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry
           </Box>
         )
         : null}
-      {latest && running ? line(latest) : null}
       {/* The older ones, oldest first, while "N more" is open. */}
       {open ? log.slice(0, -1).map(line) : null}
     </Box>
@@ -430,7 +453,12 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
             ? { t: ` ${f.flag} `, c: FLAG_COLOR, b: true, right: true }
             : now
               ? { t: ` ${gone && f.by === 'you' && now === 'delete' ? 'Deleted by you' : style.pill} `, ...badgeColors(solid, style.color, style.fill), b: true, right: true }
-              : { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true },
+              // At rest, the tone's glyph in its colour: a word ("Committed") took the name's room
+              // (seen live). The tree's letters are git's (C is a conflict), so no letter here.
+              // "Deleted by you" keeps its words: who deleted it is not in the glyph.
+              : gone && f.by === 'you'
+                ? { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true }
+                : { t: ` ${style.glyph} `, c: style.color, right: true },
         ]
         if (Client) {
           rowPresses.set(key, () => (gone ? actions.history(f.path) : actions.reveal(f.path)))

@@ -74,8 +74,11 @@ test('the card shows a warning with the count, and pressing it lists the files',
   await $.tool.call(edit('C:\\work\\other\\x.ts'))
   await $.tool.call(edit('C:\\work\\other\\y.ts'))
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
-  expect(await hasText(ui, '⚠')).toBe(true)
-  expect((await ui.find({ key: 'outside-toggle' }))?.props?.label).toBe('2 outside')
+  expect(await hasText(ui, '⚠ 2 files written outside the project')).toBe(true)
+  // A line of its own on a faint warning fill, not a chip among the git ones.
+  expect(String((await ui.find({ key: 'chip-outside' }))?.props?.backgroundColor)).toMatch(/22$/)
+  expect(JSON.stringify(await ui.find({ key: 'chips' }))).not.toContain('outside-toggle')
+  expect((await ui.find({ key: 'outside-toggle' }))?.props?.label).toBe('show')
   expect(await hasText(ui, 'C:/work/other/y.ts')).toBe(false)
   await ui.press({ key: 'outside-toggle' })
   expect(await hasText(ui, 'C:/work/other/y.ts')).toBe(true)
