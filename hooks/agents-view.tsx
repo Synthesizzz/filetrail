@@ -121,7 +121,7 @@ function row(els: Els, mate: Helper, c: Ctx) {
   const more = mate.files.length - shown.length
   const bar = barCells(elapsed(mate, c.now), c.longest, c.cells)
   const pose = crabPose(mate)
-  const art = Svg && c.crab ? crabSvg(pose, `Crab ${look.word}: ${task}`) : null
+  const art = Svg && c.crab ? crabSvg(pose, `Crab ${look.word}: ${task}`, { wear: true }) : null
   return (
     <Box key={`agent-${mate.id}`} flexDirection="row" gap={1} alignItems="flex-start" minWidth={0} overflow="hidden">
       {Svg && art

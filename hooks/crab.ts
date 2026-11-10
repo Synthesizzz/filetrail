@@ -216,8 +216,22 @@ const LOOKS: Record<Pose, Look> = {
   },
 }
 
-/** The crab in a pose, as an Svg's source; motion stops for a reader who asked for less. */
-export function crabSvg(pose: Pose, alt: string): { source: string; alt: string; width: number; height: number } {
+const HAT = '#facc15'
+const BRIM = '#ca8a04'
+const MEDAL = '#a16207'
+
+/**
+ * Workwear for the helper crabs of the Agents tab: a hard hat when it writes, round glasses when it reads,
+ * a medal when it is done. The other poses wear nothing, so a helper reads at a glance as a worker.
+ */
+const WEAR: Partial<Record<Pose, string>> = {
+  write: block(5.5, 0.8, 5, 0.9, HAT) + block(4.5, 1.6, 7, 1.4, HAT) + block(3.7, 2.8, 8.6, 0.5, BRIM),
+  read: `<g fill="none" stroke="${EYE}" stroke-width="0.35" shape-rendering="geometricPrecision"><rect x="4.9" y="4.9" width="2.4" height="2.4"/><rect x="8.7" y="4.9" width="2.4" height="2.4"/><path d="M7.3 5.8 H8.7"/></g>`,
+  passed: block(7.2, 9.4, 1.6, 1.6, STAR) + block(7.7, 9, 0.6, 0.6, MEDAL),
+}
+
+/** The crab in a pose, as an Svg's source; motion stops for a reader who asked for less. `wear` dresses it for its work. */
+export function crabSvg(pose: Pose, alt: string, opts: { wear?: boolean } = {}): { source: string; alt: string; width: number; height: number } {
   const { arms, eyes, prop, moves } = LOOKS[pose]
   const right = `<g transform="translate(${WIDE} 0) scale(-1 1)">${ARMS[arms[1]]}</g>`
   const crab = `<g class="all">${ARMS[arms[0]]}${right}${BODY}${EYES[eyes]}${LEGS}</g>`
@@ -227,6 +241,7 @@ export function crabSvg(pose: Pose, alt: string): { source: string; alt: string;
       `<style>${moves}@media (prefers-reduced-motion:reduce){*{animation:none!important}}</style>`,
       crab,
       prop,
+      opts.wear ? (WEAR[pose] ?? '') : '',
       '</svg>',
     ].join(''),
     alt,

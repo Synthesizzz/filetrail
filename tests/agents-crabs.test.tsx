@@ -40,18 +40,29 @@ test('desktop: each row has a crab in a pose for its last file, cheering once do
   let found = await crabs(desk)
   expect(found.map((s: any) => s.props.alt).sort()).toEqual(['Crab working: Fresh helper', 'Crab working: Write the notes'])
   const named = (list: any[], end: string) => list.find((c: any) => c.props.alt.endsWith(end))
-  expect(named(found, 'Write the notes').props.source).toBe(crabSvg('write', 'Crab working: Write the notes').source)
-  expect(named(found, 'Fresh helper').props.source).toBe(crabSvg('think', 'Crab working: Fresh helper').source)
+  expect(named(found, 'Write the notes').props.source).toBe(crabSvg('write', 'Crab working: Write the notes', { wear: true }).source)
+  expect(named(found, 'Fresh helper').props.source).toBe(crabSvg('think', 'Crab working: Fresh helper', { wear: true }).source)
   await $.turn.complete({ ...DONE, agentId: a } as never)
   found = await crabs(desk)
   expect(named(found, 'Write the notes').props.alt).toBe('Crab done: Write the notes')
-  expect(named(found, 'Write the notes').props.source).toBe(crabSvg('passed', 'Crab done: Write the notes').source)
+  expect(named(found, 'Write the notes').props.source).toBe(crabSvg('passed', 'Crab done: Write the notes', { wear: true }).source)
   await desk.unmount()
   const term = await $.ui.mount({ plugin: 'filetrail', surface: 'terminal', ...PANE })
   await term.press({ key: 'tab-agents' })
   expect(await crabs(term)).toHaveLength(0)
   expect(await term.find({ key: `agent-${b}` })).toBeDefined()
   await term.unmount()
+})
+
+test('workwear: a hard hat to write, glasses to read, a medal when done; nothing for the other poses or without wear', () => {
+  const bare = (pose: any) => crabSvg(pose, 'x').source
+  const worn = (pose: any) => crabSvg(pose, 'x', { wear: true }).source
+  for (const pose of ['write', 'read', 'passed'] as const) expect(worn(pose)).not.toBe(bare(pose))
+  expect(worn('write')).toContain('#facc15')
+  expect(worn('read')).toContain('<rect x="4.9"')
+  expect(worn('passed')).toContain('#a16207')
+  for (const pose of ['think', 'failed', 'idle'] as const) expect(worn(pose)).toBe(bare(pose))
+  expect(crabSvg('write', 'x')).toEqual(crabSvg('write', 'x', {}))
 })
 
 test('only the first rows draw a crab; the rest keep the glyph', async ($, on) => {
