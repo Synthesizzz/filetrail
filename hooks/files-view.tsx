@@ -51,6 +51,8 @@ export type FilesActions = {
   openInAll: (dir: Entry) => void
   /** Lists the open folders again, reads git again and rebuilds the search's file list. */
   refresh: () => void
+  /** Puts the last test run's line away until a newer run. */
+  dismissTests: () => void
   /** Leaves dotfiles out of the tree, or shows them again. */
   toggleDots: () => void
   /** Closes every folder. */
@@ -478,7 +480,7 @@ export function filesView(
               )}
           </Box>,
         branchChips(els, git, gitLog, files.gitOpen === true, actions),
-      ], width < NARROW_COLUMNS, stage, working, tests, helperStrip(els, crew, () => actions.agents()))}
+      ], width < NARROW_COLUMNS, stage, working, tests, helperStrip(els, crew, () => actions.agents()), actions.dismissTests)}
       {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">

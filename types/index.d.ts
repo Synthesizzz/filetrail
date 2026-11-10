@@ -138,7 +138,7 @@ export type TouchedFile = { path: string; tone: Tone; at: number; by?: DeletedBy
 export type TestRun = { command: string; ok: boolean; at: number; ms: number; scope: 'file' | 'full' }
 
 /** The session's test runs: the last, and the last per-file and full ones. */
-export type TestRuns = { last: TestRun; file?: TestRun; full?: TestRun }
+export type TestRuns = { last: TestRun; file?: TestRun; full?: TestRun; /** The `at` of the last run when the person put its line away: a newer run shows again. */ hidden?: number }
 
 /** A file a helper read or wrote: absolute path, forward slashes. A write outranks a read of the same file. */
 export type HelperFile = { path: string; tone: 'read' | 'write' }

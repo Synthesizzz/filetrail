@@ -17,7 +17,7 @@ import { dimensionsOf, imageKind, imageSvg, MAX_DRAW_BYTES } from './image'
 import type { ImageKind } from './image'
 import { checksum, judgeStale, remember, staleLabel } from './stale'
 import type { ReadRecord } from './stale'
-import { addRun, testCommand, testScope } from './test-runs'
+import { addRun, dismissRuns, testCommand, testScope } from './test-runs'
 import { contextLine, mentionedPaths, resolveMention } from './context'
 import { fullCopy, openCommand, osOf, relativeCopy } from './open'
 import type { HostOs } from './open'
@@ -1326,6 +1326,7 @@ export const register: Register = on => {
                   await $.store.set(MODE_KEY, 'all')
                   if (!(k in (await read($, listing)))) await listDir($, dir.path)
                 }),
+                dismissTests: () => fire($, 'putting the test result away', () => update($, tests, dismissRuns)),
                 refresh: () => fire($, 'refreshing', async () => {
                   await relist($)
                   await refreshGit($)

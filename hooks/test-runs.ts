@@ -57,6 +57,16 @@ export function addRun(runs: TestRuns | null, run: TestRun): TestRuns {
   return { ...(runs ?? {}), last: run, [run.scope]: run } as TestRuns
 }
 
+/** The runs with the last one's line put away, until a newer run comes. */
+export function dismissRuns(runs: TestRuns | null): TestRuns | null {
+  return runs ? { ...runs, hidden: runs.last.at } : runs
+}
+
+/** Whether the last run's line is shown: not while it is put away. */
+export function runShown(runs: TestRuns | null): boolean {
+  return !!runs && runs.hidden !== runs.last.at
+}
+
 /** Words for a per-file run and a full run that gave different results, null when they agree or one is missing. */
 export function disagreement(runs: TestRuns | null): string | null {
   if (!runs?.file || !runs.full || runs.file.ok === runs.full.ok) return null

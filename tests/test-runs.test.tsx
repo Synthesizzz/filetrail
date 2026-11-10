@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { addRun, disagreement, formatDuration, testCommand, testScope } from '../hooks/test-runs'
+import { addRun, disagreement, dismissRuns, formatDuration, runShown, testCommand, testScope } from '../hooks/test-runs'
 import type { TestRun } from '../types'
 import { DONE, PANE, START, hasText, plain, world } from './world'
 
@@ -55,7 +55,7 @@ test('disagreement: only when a per-file run and a full run both exist and gave 
   expect(disagreement(addRun(both, run({ scope: 'full', ok: true, at: 9 })))).toBe(null)
 })
 
-const lineOf = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => plain(t.text)).find((t: string) => /Tests (passed|failed) ·/.test(t))
+const lineOf = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => plain(t.text)).find((t: string) => /^(✓ passed|✗ failed) ·/.test(t))
 
 test('the last test run stays on the card after the chip is gone: command, result, time, how long', async ($, on) => {
   const { clock } = world(on, {})
@@ -69,14 +69,14 @@ test('the last test run stays on the card after the chip is gone: command, resul
   await clock.advance(6000)
   // The chip (the crab's pill) is gone after FLASH_MS; the line is not.
   expect(await hasText(ui, ' Tests passed ')).toBe(false)
-  expect(await lineOf(ui)).toMatch(/^✓ Tests passed · npm test · \d\d:\d\d · \d+ms$/)
+  expect(await lineOf(ui)).toMatch(/^✓ passed · npm test · \d\d:\d\d · \d+ms$/)
   await $.tool.call({ tool: 'Bash', command: 'npm test --fail' } as never)
   await clock.advance(6000)
-  expect(await lineOf(ui)).toMatch(/^✗ Tests failed · npm test --fail · /)
+  expect(await lineOf(ui)).toMatch(/^✗ failed · npm test --fail · /)
   // Run after a cd, the line names the tests, not the cd.
   await $.tool.call({ tool: 'Bash', command: 'cd /c/work/demo && npm test' } as never)
   await clock.advance(6000)
-  expect(await lineOf(ui)).toMatch(/^✓ Tests passed · npm test · /)
+  expect(await lineOf(ui)).toMatch(/^✓ passed · npm test · /)
   await ui.unmount()
 })
 
@@ -93,6 +93,44 @@ test('a per-file run and a full run that disagree are flagged; agreeing again cl
   await $.tool.call({ tool: 'Bash', command: 'pytest' } as never)
   await clock.advance(6000)
   expect(await hasText(ui, '⚠ per-file run passed, full run failed')).toBe(false)
+  await ui.unmount()
+})
+
+test('dismissRuns hides the shown run until a newer one comes; the disagreement does not depend on it', () => {
+  expect(dismissRuns(null)).toBe(null)
+  const a = addRun(null, run({ at: 5 }))
+  expect(runShown(a)).toBe(true)
+  const hidden = dismissRuns(a)
+  expect(runShown(hidden)).toBe(false)
+  expect(runShown(addRun(hidden, run({ at: 6 })))).toBe(true)
+  const both = addRun(addRun(null, run({ scope: 'file', ok: true })), run({ scope: 'full', ok: false, at: 3 }))
+  expect(disagreement(dismissRuns(both))).toBe('per-file run passed, full run failed')
+})
+
+test('a press on the x puts the test line away; a new run brings it back; a disagreement stays', async ($, on) => {
+  const { clock } = world(on, {})
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await $.turn.start({ turnId: 't1', text: 'test' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await clock.advance(6000)
+  expect(await lineOf(ui)).toMatch(/^✓ passed · npm test/)
+  await ui.press({ key: 'tests-dismiss' })
+  await clock.advance(100)
+  expect(await lineOf(ui)).toBeUndefined()
+  expect(await ui.find({ key: 'tests-dismiss' })).toBeUndefined()
+  await $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await clock.advance(6000)
+  expect(await lineOf(ui)).toMatch(/^✓ passed · npm test/)
+  // A per-file run that passes beside a full run that fails: the warning outlives the dismissed line.
+  await $.tool.call({ tool: 'Bash', command: 'pytest tests/test_a.py' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'pytest --fail' } as never)
+  await clock.advance(6000)
+  await ui.press({ key: 'tests-dismiss' })
+  await clock.advance(100)
+  expect(await lineOf(ui)).toBeUndefined()
+  expect(await hasText(ui, '⚠ per-file run passed, full run failed')).toBe(true)
   await ui.unmount()
 })
 
@@ -129,6 +167,6 @@ test('PowerShell test runs are kept too', async ($, on) => {
   await $.turn.start({ turnId: 't1', text: 'test' } as never)
   await $.tool.call({ tool: 'PowerShell', command: 'dotnet test' } as never)
   await clock.advance(6000)
-  expect(await lineOf(ui)).toMatch(/^✓ Tests passed · dotnet test · /)
+  expect(await lineOf(ui)).toMatch(/^✓ passed · dotnet test · /)
   await ui.unmount()
 })

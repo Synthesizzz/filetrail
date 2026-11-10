@@ -10,7 +10,7 @@ import type { EngineInterface, RenderElement } from 'claude-code'
 import type { Entry, Stage, StagePose, TestRuns, Tone } from '../types'
 import { relTo } from './history'
 import { badgeColors, clockOf, splitPath } from './paths'
-import { disagreement, formatDuration } from './test-runs'
+import { disagreement, formatDuration, runShown } from './test-runs'
 import { AGENT, COMMAND, crabSvg, GONE, MERGE, PUSH, SEARCH, TERM_FRAMES, TEST } from './crab'
 import type { Pose } from './crab'
 import type { CrabProps } from './crab-client'
@@ -58,16 +58,25 @@ export function spelled(listing: Readonly<Record<string, Entry[]>>, path: string
 }
 
 /** The last test run as one line (what ran, when, how long) and, when a per-file and a full run disagree, a warning under it. */
-function testLine(els: Els, tests: TestRuns) {
-  const { Box, Text } = els
+function testLine(els: Els, tests: TestRuns, dismiss?: () => void) {
+  const { Box, Text, Button } = els
   const run = tests.last
   const differ = disagreement(tests)
+  const shown = runShown(tests)
+  if (!shown && !differ) return null
   return (
     <Box key="test-box" flexDirection="column" minWidth={0}>
-      <Text key="test-line" wrap="wrap">
-        <Text color={run.ok ? PASSED : GONE} weight="semibold">{run.ok ? '✓ Tests passed' : '✗ Tests failed'}</Text>
-        <Text dimColor>{` · ${run.command} · ${clockOf(run.at)} · ${formatDuration(run.ms)}`}</Text>
-      </Text>
+      {shown ? (
+        <Box key="test-row" flexDirection="row" gap={1} minWidth={0}>
+          <Box key="test-text" flexShrink={1} flexGrow={1} minWidth={0}>
+            <Text key="test-line" wrap="wrap">
+              <Text color={run.ok ? PASSED : GONE} weight="semibold">{run.ok ? '✓ passed' : '✗ failed'}</Text>
+              <Text dimColor>{` · ${run.command} · ${clockOf(run.at)} · ${formatDuration(run.ms)}`}</Text>
+            </Text>
+          </Box>
+          {dismiss ? <Button key="tests-dismiss" label="×" plain dimColor onPress={dismiss} /> : null}
+        </Box>
+      ) : null}
       {differ ? <Text key="test-differ" color="warning" wrap="wrap">{`⚠ ${differ}`}</Text> : null}
     </Box>
   )
@@ -86,6 +95,8 @@ export function nowCard(
   tests: TestRuns | null = null,
   /** The helpers at work, as a short strip under the row (null when none works). */
   helpers: RenderElement | null = null,
+  /** Puts the last test run's line away until a newer run (the x beside it). */
+  dismissTests?: () => void,
 ) {
   const { Box, Text } = els
   const Svg = svgOf(els)
@@ -138,7 +149,7 @@ export function nowCard(
       {style && !narrow ? <Text key="now-pill" color={pillInk.c} backgroundColor={pillInk.bg} weight="semibold">{` ${style.pill} `}</Text> : null}
     </Box>
     {/* The session's last test run, kept after the chip is gone; the chip itself is the row's while it shows. */}
-    {tests && !(stage && stage.pose === 'test') ? testLine(els, tests) : null}
+    {tests && !(stage && stage.pose === 'test') ? testLine(els, tests, dismissTests) : null}
     {/* The helpers at work, a press opens the Agents tab. */}
     {helpers}
     {/* Below the row: the files Claude touched this session. */}
