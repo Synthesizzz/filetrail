@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Helper } from '../types'
-import { DONE, START, world } from './world'
+import { DONE, PANE, START, world } from './world'
 
 const helpersOf = (states: Record<string, unknown[]>): Helper[] => (states.helpers?.at(-1) ?? []) as Helper[]
 const spawn = async ($: any, description: string, subagentType = 'Explore') => {
@@ -93,4 +93,29 @@ test('a spawn with neither a task nor a prompt still goes through and is listed 
   const r = await $.agent.spawn({ subagentType: 'Plan' } as never)
   expect(r.agentId).toBeDefined()
   expect(helpersOf(states)).toMatchObject([{ type: 'Plan', description: '', state: 'running' }])
+})
+
+test('the first helper of a turn turns the pane to the Agents tab and opens the pane; later ones leave the tab where the person put it; the next turn does it again', async ($, on) => {
+  const w = world(on, {})
+  await $.session.start(START)
+  await w.clock.settle()
+  const tabNow = () => (w.states.tab ?? []).at(-1)
+  const opened = w.opens.length
+  await $.turn.start({ turnId: 't1', text: 'go' } as never)
+  await spawn($, 'First')
+  expect(tabNow()).toBe('agents')
+  expect(w.opens.length).toBe(opened + 1)
+  // The person goes back to Files; a second helper in the same turn does not pull the tab away.
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await ui.press({ key: 'tab-files' })
+  expect(tabNow()).toBe('files')
+  await spawn($, 'Second')
+  expect(tabNow()).toBe('files')
+  expect(w.opens.length).toBe(opened + 1)
+  await $.turn.complete({ ...DONE } as never)
+  // Next turn, the first helper turns it again.
+  await $.turn.start({ turnId: 't2', text: 'again' } as never)
+  await spawn($, 'Third')
+  expect(tabNow()).toBe('agents')
+  await ui.unmount()
 })

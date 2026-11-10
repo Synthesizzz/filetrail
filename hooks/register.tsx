@@ -68,6 +68,8 @@ const tests = atom({ plugin: 'filetrail', key: 'tests' } as const, null as TestR
 const stale = atom({ plugin: 'filetrail', key: 'stale' } as const, {} as Record<string, StaleMark>)
 /** The session's helpers (subagents), for the Agents tab and the card's strip. (`helpers` below counts those at work, for the crab.) */
 const crew = atom({ plugin: 'filetrail', key: 'helpers' } as const, [] as Helper[])
+/** Whether the pane was turned to the Agents tab for this turn already: the first helper of a turn does it, the rest leave the tab where the person put it. */
+let agentsShown = false
 /** Kept in the session's state, so a reload starts from the head measured before. */
 /** Files the Claude touched list keeps. */
 const MAX_TOUCHED = TOUCHED_MAX
@@ -939,6 +941,7 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       pending = { id: e.turnId, at: await $.clock.now(), prompt: firstLine(e.text), steps: [] }
       headCache = undefined
+      agentsShown = false
       await update($, working, () => true)
       // A new turn: the Now tree starts empty (the last turn's stayed on show until now).
       await update($, turnFiles, () => [])
@@ -963,6 +966,13 @@ export const register: Register = on => {
         const at = await $.clock.now()
         const task = e.description || firstLine(e.prompt ?? '', 60)
         await update($, crew, l => joined(l, { id, type: e.subagentType || 'subagent', description: task }, at))
+        // The first helper of a turn turns the pane to the Agents tab (and opens the pane if it was
+        // closed), without taking the keyboard; later ones leave the tab where the person put it.
+        if (!agentsShown) {
+          agentsShown = true
+          await update($, tab, () => 'agents')
+          await openPane($)
+        }
       }
     } catch (err) {
       $.ui.log(`filetrail: a helper was not listed: ${String(err)}`)

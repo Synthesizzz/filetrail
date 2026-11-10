@@ -145,6 +145,8 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 
 The tab appears, beside Files and History, once Claude has started a helper (a subagent) in the session, and `/trail agents` opens the pane on it at any time.
 
+- **It opens by itself.** The first helper Claude starts in a turn turns the pane to this tab, and opens the pane if it was closed, without taking the keyboard. Later helpers in the same turn leave the tab where you put it; the next turn does it again.
+
 - A **card for each helper**, those at work first: its type and the task it was given, whether it is working, done or failed, how long it worked, how many tools it called, and the files it read (`◉`) or wrote (`✎`). Press a file to see it in the pane.
 - The **strip on the card** (the Files tab's top) names the helpers at work, two at most, with `+N more helper`; press it to open the tab. It goes when none is working.
 - The files are the ones a helper named in its own `Read`, `Edit` and `Write` calls that went through. What a shell command did to files is not counted for a helper. The list is kept for the session (50 helpers, 30 files each) and starts again when the session does; a helper that was already running comes back from Claude Code's own list, without its calls and files.

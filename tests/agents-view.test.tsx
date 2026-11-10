@@ -27,6 +27,8 @@ test('no tab and no strip until a helper starts; then the tab counts those at wo
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ plugin: 'filetrail', surface, ...PANE })
     expect(await labelOf(ui, 'tab-agents')).toBe('Agents 1')
+    // The first helper turned the pane to the Agents tab by itself; the strip is on the Files tab.
+    await ui.press({ key: 'tab-files' })
     expect(await labelOf(ui, `strip-${id}`)).toBe('◐ Explore · Read the notes · 1')
     await ui.unmount()
   }
@@ -40,6 +42,7 @@ test('the strip names the two newest at work and counts the rest; a press on it 
   const b = await spawn($, 'Second job', 'Plan')
   const c = await spawn($, 'Third job', 'general-purpose')
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  await ui.press({ key: 'tab-files' })
   expect(await ui.find({ key: `strip-${c}` })).toBeDefined()
   expect(await ui.find({ key: `strip-${b}` })).toBeDefined()
   expect(await ui.find({ key: `strip-${a}` })).toBeUndefined()
@@ -104,6 +107,7 @@ test('a narrow pane (36 columns) still draws the tab, the strip and the cards', 
   const id = await spawn($, 'A task with a rather long description that must not run out of the card')
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ plugin: 'filetrail', surface, ...NARROW })
+    await ui.press({ key: 'tab-files' })
     const strip = await labelOf(ui, `strip-${id}`)
     expect(strip).toBeDefined()
     expect(strip!.length).toBeLessThanOrEqual(34)
