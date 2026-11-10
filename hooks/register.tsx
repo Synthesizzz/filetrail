@@ -1268,7 +1268,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
-        <Box key="tabs" flexDirection="row" gap={1}>
+        <Box key="tabs" flexDirection="row" flexWrap="wrap" gap={1} minWidth={0}>
           <Button key="tab-files" label="Files" hotkey="f"
             {...(current === 'files' ? { variant: 'primary' as const } : { dimColor: true })}
             onPress={go('files')} />
