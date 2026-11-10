@@ -132,7 +132,7 @@ function row(els: Els, mate: Helper, c: Ctx) {
           <Text weight="semibold">{task}</Text>
         </Button>
         <Text key="facts" dimColor wrap="wrap">{factsOf(mate, c.now)}</Text>
-        <Text key="bar"><Text color={look.color}>{BAR.repeat(bar.on)}</Text><Text dimColor>{BAR.repeat(bar.off)}</Text></Text>
+        <Text key="bar" mono wrap="truncate-end"><Text color={look.color}>{BAR.repeat(bar.on)}</Text><Text dimColor>{BAR.repeat(bar.off)}</Text></Text>
         {c.open ? (
           <Box key="files" flexDirection="column" marginTop={1}>
             <Text key="kind" dimColor>{`${mate.type}${mate.files.length ? ` · ${mate.files.length} file${mate.files.length === 1 ? '' : 's'}` : ' · no files yet'}`}</Text>
