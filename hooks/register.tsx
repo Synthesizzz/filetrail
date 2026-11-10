@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Helper, Hint, Stage, HistoryView, Preview, SearchIndex, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import type { ContentHits, DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Helper, Hint, Stage, HistoryView, Preview, SearchIndex, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
@@ -12,6 +12,10 @@ import { called, finished, joined, reconciled, resumed, running } from './helper
 import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
 import { blockedOf, callText } from './blocked'
 import { coveredBy, guardReason, mentionedGuard, toggled, writtenPath } from './guard'
+import { addOutside, canonical, isOutside, isWithin } from './outside'
+import { findRefs, refLabel } from './refs'
+import { grepArgv, MIN_QUERY, parseGrep } from './grep'
+import type { GrepResult } from './grep'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
 import type { Snapshot } from './shell-change'
 import { dimensionsOf, imageKind, imageSvg, MAX_DRAW_BYTES } from './image'
@@ -71,6 +75,14 @@ const tests = atom({ plugin: 'filetrail', key: 'tests' } as const, null as TestR
 const stale = atom({ plugin: 'filetrail', key: 'stale' } as const, {} as Record<string, StaleMark>)
 /** The guards (see GUARDS_KEY) as the tree draws them. */
 const guards = atom({ plugin: 'filetrail', key: 'guards' } as const, [] as string[])
+/** The files Claude wrote outside the project this session, newest first (see hooks/outside.ts). */
+const outside = atom({ plugin: 'filetrail', key: 'outside' } as const, [] as string[])
+/** The last search inside files (hooks/grep.ts). */
+const contentHits = atom({ plugin: 'filetrail', key: 'contentHits' } as const, null as ContentHits | null)
+/** Counts the searches inside files: only the latest one may answer. */
+let grepSeq = 0
+/** How long typing must pause before a search inside files runs. */
+const GREP_PAUSE_MS = 200
 /** The session's helpers (subagents), for the Agents tab and the card's strip. (`helpers` below counts those at work, for the crab.) */
 const crew = atom({ plugin: 'filetrail', key: 'helpers' } as const, [] as Helper[])
 /** The helpers whose rows are open to their files in the Agents tab (ids); a press on a row's task opens or closes it. */
@@ -449,6 +461,65 @@ async function guardStop($: EngineInterface, call: { tool: string }): Promise<st
     }
     return undefined
   }
+}
+
+/**
+ * Looks for `query` inside the project's files: `git grep` in a repo, a recursive `grep` when
+ * git cannot do it (not a repo, or git failed). The answer is a result or the reason there is none.
+ */
+async function searchFiles($: EngineInterface, query: string): Promise<{ result: GrepResult } | { reason: string }> {
+  const opts = { cwd: root, timeoutMs: 15_000 }
+  if (isRepo !== false) {
+    const viaGit = await $.process.run(grepArgv(query, true), opts).catch(() => null)
+    // 0 found, 1 found nothing; anything else (128: not a repo) leaves it to grep.
+    if (viaGit && viaGit.exitCode <= 1) return { result: parseGrep(viaGit.stdout, true) }
+  }
+  let ran
+  try {
+    ran = await $.process.run(grepArgv(query, false), opts)
+  } catch (err) {
+    return { reason: `Could not search: ${String(err)}` }
+  }
+  // 2 is grep's "some files could not be read": what it did find still counts.
+  if (ran.exitCode <= 1 || (ran.exitCode === 2 && ran.stdout !== '')) return { result: parseGrep(ran.stdout, false) }
+  return { reason: `Could not search: ${ran.stderr.trim().split('\n')[0] || `grep exited with ${ran.exitCode}`}` }
+}
+
+/**
+ * The search box's text, looked for inside files once typing pauses. A newer query replaces
+ * this one at once, so only the latest answers; a short one clears the results.
+ */
+async function runGrep($: EngineInterface, query: string): Promise<void> {
+  const mine = ++grepSeq
+  const q = query.trim()
+  if (q.length < MIN_QUERY) {
+    await update($, contentHits, () => null)
+    return
+  }
+  await $.clock.sleep(GREP_PAUSE_MS)
+  if (mine !== grepSeq) return
+  await update($, contentHits, () => ({ query: q, state: 'running' as const, matches: [], total: 0, capped: false }))
+  const found = await searchFiles($, q)
+  if (mine !== grepSeq) return
+  await update($, contentHits, () => 'result' in found
+    ? { query: q, state: 'done' as const, ...found.result }
+    : { query: q, state: 'failed' as const, matches: [], total: 0, capped: false, reason: found.reason })
+}
+
+/**
+ * A write that went through to a place outside the project joins the list the card's warning
+ * counts, and the first of a session says so in a toast. The project is the repo when there is
+ * one, else the folder the session started in. It never throws: a missed note must not touch the call.
+ */
+async function noteOutside($: EngineInterface, call: { tool: string }): Promise<void> {
+  const path = writtenPath(call)
+  if (path === null) return
+  const info = await read($, git)
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? ''
+  if (!isOutside(info?.top || root, home, path)) return
+  const before = await read($, outside)
+  await update($, outside, list => addOutside(list, path))
+  if (before.length === 0) $.ui.toast(`filetrail: Claude wrote a file outside the project: ${path}`)
 }
 
 /** Files Claude read this session, as they were then: what a later change is measured against. */
@@ -1081,6 +1152,7 @@ export const register: Register = on => {
     const next = async (x: typeof e) => {
       const r = await down(x)
       await countHelperCall($, x, r)
+      if (outcomeOf(r) === 'ok') await noteOutside($, x as unknown as { tool: string }).catch(err => $.ui.log(`filetrail: an outside write was not noted: ${String(err)}`))
       return r
     }
     let target: Target | null = null
@@ -1308,6 +1380,47 @@ export const register: Register = on => {
     }
   })
 
+  // Under a reply that names a file with a line (`src/a.ts:12`, `src/a.ts#L12-L20`) there is a
+  // link for each file of the project that exists; pressing one shows the file in the pane on the
+  // page holding the line. The reply itself is the engine's own drawing, untouched above them.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (e.props.isSummary) return next(e)
+    const refs = findRefs(e.props.text)
+    if (refs.length === 0 || !root) return next(e)
+    const beneath = await next(e)
+    const seen = new Set<string>()
+    const shown: { key: string; label: string; path: string; line: number }[] = []
+    for (const ref of refs) {
+      const path = resolveMention(root, ref.path)
+      const same = `${canonical(root, path)}:${ref.line}:${ref.end ?? ''}`
+      if (seen.has(same) || !isWithin(root, path) || !(await $.fs.exists(path).catch(() => false))) continue
+      seen.add(same)
+      const rel = relTo(root, path)
+      shown.push({ key: `ref-${rel.toLowerCase()}:${ref.line}${ref.end !== undefined ? `-${ref.end}` : ''}`, label: refLabel({ ...ref, path: rel }), path, line: ref.line })
+    }
+    if (shown.length === 0) return beneath
+    const { Box, Text, Button } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="column">
+        {beneath}
+        <Box key="refs" flexDirection="row" flexWrap="wrap" gap={1}>
+          <Text dimColor>↳</Text>
+          {shown.map(r => (
+            <Button key={r.key} label={r.label} plain dimColor onPress={() => fire($, 'opening a file reference', async () => {
+              await update($, tab, () => 'files')
+              await loadPreview($, r.path, pageOf(r.line))
+              await openPane($)
+            })} />
+          ))}
+        </Box>
+      </Box>
+    )
+  }).catch(async ($, e, next) => {
+    // Never take the reply away: the engine's own drawing, with a line saying why the links are missing.
+    $.ui.log(`filetrail: reply links failed: ${String(next.error)}`)
+    return next.called ? undefined : next(e)
+  })
+
   // A tree row is a Client (hooks/row.tsx) so its colours paint on the desktop; its press
   // arrives here as a post, and the row's own action runs, as a Button's onPress would.
   // A double-click's second click opens a file (a folder has nothing to open, so it is
@@ -1399,14 +1512,38 @@ export const register: Register = on => {
                 unselect: () => fire($, 'clearing the selection', () => update($, files, f => ({ ...f, selected: null }))),
                 search: query => fire($, 'searching', async () => {
                   await update($, files, f => ({ ...f, query }))
+                  if ((await read($, files)).contents) return runGrep($, query)
                   if (query.trim() && !(await read($, index))) await ensureIndex($)
                 }),
+                // Enter: while searching inside files, the first match opens in the preview.
+                submit: query => fire($, 'searching', async () => {
+                  if (!(await read($, files)).contents) {
+                    await update($, files, f => ({ ...f, query }))
+                    if (query.trim() && !(await read($, index))) await ensureIndex($)
+                    return
+                  }
+                  const first = (await read($, contentHits))?.matches[0]
+                  if (first) await loadPreview($, joinPath(root, first.path), pageOf(first.line))
+                  else await runGrep($, query)
+                }),
+                setContents: enabled => fire($, 'switching the search', async () => {
+                  await update($, files, f => ({ ...f, contents: enabled }))
+                  const query = (await read($, files)).query ?? ''
+                  if (enabled) await runGrep($, query)
+                  else {
+                    grepSeq++
+                    await update($, contentHits, () => null)
+                    if (query.trim() && !(await read($, index))) await ensureIndex($)
+                  }
+                }),
+                openMatch: (path, line) => fire($, 'showing the match', () => loadPreview($, joinPath(root, path), pageOf(line))),
                 open: path => fire($, 'opening the file', () => openFile($, path)),
                 showInFolder: (path, isDir) => fire($, 'showing the file in its folder', () => showInFolder($, path, isDir)),
                 guard: path => fire($, 'guarding', () => toggleGuard($, path)),
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
                 toggleTouched: () => fire($, 'listing the touched files', () => update($, files, f => ({ ...f, touchedOpen: !f.touchedOpen }))),
+                toggleOutside: () => fire($, 'listing the files written outside', () => update($, files, f => ({ ...f, outsideOpen: !f.outsideOpen }))),
                 setMode: mode => fire($, 'switching the tree', async () => {
                   await update($, files, f => ({ ...f, mode }))
                   await $.store.set(MODE_KEY, mode)
@@ -1450,7 +1587,7 @@ export const register: Register = on => {
                   await update($, files, f => ({ ...f, query: '' }))
                   await reveal($, joinPath(root, rel), true)
                 }),
-              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale), mates, await read($, guards))
+              }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale), mates, await read($, guards), await read($, outside), await read($, contentHits))
             : historyView(els, turnsAll, await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),

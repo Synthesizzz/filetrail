@@ -92,8 +92,15 @@ export type GitInfo = {
 /**
  * `gitOpen`: the git bar shows every kept action, not only the latest. `hideDots`: dotfiles left out of the tree.
  * `touchedOpen`: the card lists every touched file, not only the latest few.
+ * `outsideOpen`: the card lists the files Claude wrote outside the project. `contents`: the search box looks inside files, not at their names.
  */
-export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean; touchedOpen?: boolean; mode?: TreeMode; touchedRows?: number }
+export type FilesView = { expanded: string[]; selected: string | null; query?: string; gitOpen?: boolean; hideDots?: boolean; touchedOpen?: boolean; outsideOpen?: boolean; contents?: boolean; mode?: TreeMode; touchedRows?: number }
+
+/** One line a content search found: its file (relative to the project, slashes forward), its 1-based line number and its text. */
+export type GrepMatch = { path: string; line: number; text: string }
+
+/** The last search inside files: what was asked, where it stands, and what it found (the first matches, how many there were in all). */
+export type ContentHits = { query: string; state: 'running' | 'done' | 'failed'; matches: GrepMatch[]; total: number; capped: boolean; reason?: string }
 
 /** The tree's view: the whole project, or only the way down to what Claude touched this turn. */
 export type TreeMode = 'all' | 'now'
@@ -237,6 +244,10 @@ declare module 'claude-code' {
       preview: Preview | null
       /** The files and folders Claude may not change, as full paths (a copy of the store's list, for the tree to draw). */
       guards: string[]
+      /** The files Claude wrote outside the project this session (Edit, Write or NotebookEdit that went through), newest first. */
+      outside: string[]
+      /** The last search inside files (the Contents toggle in the search box); null before one runs and once the box is cleared. */
+      contentHits: ContentHits | null
       /** The files Claude touched this session, newest first, eight at most. */
       touched: TouchedFile[]
       /** The files of the history git ignores (lower-cased), left out of History. */

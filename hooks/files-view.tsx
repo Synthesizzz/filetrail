@@ -3,7 +3,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Helper, Preview, Stage, SearchIndex, StaleMark, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import type { ContentHits, Entry, FilesView, TreeMode, GitActionEntry, GitActionKind, GitIcon, GitInfo, Helper, Preview, Stage, SearchIndex, StaleMark, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary } from './git'
 import type { DirCounts } from './git'
 import { relTo } from './history'
@@ -13,6 +13,7 @@ import { rightSlots } from './columns'
 import type { Cell } from './columns'
 import type { RowProps, Seg } from './row'
 import { coveredBy } from './guard'
+import { groupMatches, MIN_QUERY, summaryLine } from './grep'
 import { modePresses, rowCopies, rowGuards, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
 import type { ModesProps } from './modes'
 import type { Tool, ToolsProps } from './tools'
@@ -39,6 +40,12 @@ export type FilesActions = {
   unselect: () => void
   /** Sets the search box's text; '' goes back to the tree. */
   search: (query: string) => void
+  /** Enter in the search box: the first match opens in the preview when searching inside files; the same as `search` otherwise. */
+  submit: (query: string) => void
+  /** Searches inside files (true) or file names (false). */
+  setContents: (on: boolean) => void
+  /** Shows a file the content search found, on the page that holds the line. */
+  openMatch: (path: string, line: number) => void
   /** Leaves the search for the tree, opened to this file (relative to the root) and selected. */
   openHit: (rel: string) => void
   /** Opens a file with the machine's default app. */
@@ -51,6 +58,8 @@ export type FilesActions = {
   toggleGitLog: () => void
   /** Lists every touched file in the card, or only the latest few again. */
   toggleTouched: () => void
+  /** Lists the files Claude wrote outside the project under the chips, or puts the list away. */
+  toggleOutside: () => void
   /** Shows the whole tree, or only the way down to this turn's files. */
   setMode: (mode: TreeMode) => void
   /** From the Now tree, a folder pressed: the whole tree, opened down to it. */
@@ -94,6 +103,37 @@ function searchResults(els: Els, query: string, index: SearchIndex | null, actio
           <Button key={`hit-${rel.toLowerCase()}`} plain onPress={() => actions.openHit(rel)}>
             <Text weight="semibold">{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}
           </Button>
+        )
+      })}
+    </Box>
+  )
+}
+
+/** What the search inside files found, grouped per file: the file's name first and its folder dimmed, then each line with its number. */
+function contentResults(els: Els, query: string, hits: ContentHits | null, actions: FilesActions) {
+  const { Box, Text, Button } = els
+  const q = query.trim()
+  if (q.length < MIN_QUERY) return <Text key="content-short" dimColor>Type at least {MIN_QUERY} characters to search inside files.</Text>
+  // Results of an earlier query are not shown under a newer one.
+  if (!hits || hits.query !== q || hits.state === 'running') return <Text key="content-wait" dimColor>Searching inside files…</Text>
+  if (hits.state === 'failed') return <Text key="content-failed" dimColor>{hits.reason ?? 'Could not search.'}</Text>
+  return (
+    <Box key="content-results" flexDirection="column" gap="xs">
+      <Text dimColor>{summaryLine(hits)}</Text>
+      {groupMatches(hits.matches).map(g => {
+        const { name, dir } = splitPath(g.path)
+        return (
+          <Box key={`cg-${g.path.toLowerCase()}`} flexDirection="column">
+            <Box key={`cg-${g.path.toLowerCase()}-head`} flexDirection="row" gap={1} minWidth={0}>
+              <Text weight="semibold">{name}</Text>
+              {dir ? <Text dimColor wrap="truncate-start">{dir}</Text> : null}
+            </Box>
+            {g.items.map(m => (
+              <Button key={`cm-${g.path.toLowerCase()}:${m.line}`} plain onPress={() => actions.openMatch(g.path, m.line)}>
+                <Text dimColor>{`${m.line}`.padStart(5, NBSP)}{NBSP}</Text><Text wrap="truncate-end">{m.text}</Text>
+              </Button>
+            ))}
+          </Box>
         )
       })}
     </Box>
@@ -172,7 +212,7 @@ export function actionIconColor(a: GitActionEntry): string {
  * and behind, the repo's changes (or "clean"), and the latest git action Claude ran
  * (shimmering while it runs), with "N more" to list the others under the chips.
  */
-function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry[], open: boolean, actions: FilesActions) {
+function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry[], open: boolean, actions: FilesActions, outside: readonly string[] = [], outsideOpen = false) {
   const { Box, Text, Button } = els
   const Client = 'Client' in els ? els.Client : undefined
   const Svg = svgOf(els)
@@ -231,10 +271,27 @@ function branchChips(els: Els, git: GitInfo | null, log: readonly GitActionEntry
       <Box key="chips" flexDirection="row" flexWrap="wrap" gap={1} minWidth={0}>
         {branch}
         {repoChip}
+        {/* Files Claude wrote outside the project (an Edit, Write or NotebookEdit that went through): the count, and a press lists them. */}
+        {outside.length
+          ? (
+            <Box key="chip-outside" flexDirection="row" gap={1} alignItems="center">
+              <Text color="warning">⚠</Text>
+              <Button key="outside-toggle" label={outsideOpen ? 'hide' : `${outside.length} outside`} plain dimColor onPress={() => actions.toggleOutside()} />
+            </Box>
+          )
+          : null}
         {/* An action kept from before icons were recorded (state outlives a reload) has none. */}
         {latest && !running ? chip(`git-${latest.id}`, runs(latest), latest.icon ? { name: latest.icon, color: actionIconColor(latest), alt: latest.verb } : undefined) : null}
         {more > 0 ? <Button key="git-more" label={open ? 'fewer' : `${more} more`} plain dimColor onPress={() => actions.toggleGitLog()} /> : null}
       </Box>
+      {outside.length && outsideOpen
+        ? (
+          <Box key="outside-list" flexDirection="column">
+            <Text key="outside-head" color="warning">Written outside the project (shell commands are not counted):</Text>
+            {outside.map(p => <Text key={`outside-${p.toLowerCase()}`} dimColor wrap="truncate-start">{p}</Text>)}
+          </Box>
+        )
+        : null}
       {latest && running ? line(latest) : null}
       {/* The older ones, oldest first, while "N more" is open. */}
       {open ? log.slice(0, -1).map(line) : null}
@@ -420,6 +477,10 @@ export function filesView(
   crew: readonly Helper[] = [],
   /** The files and folders Claude may not change, as full paths. */
   guards: readonly string[] = [],
+  /** The files Claude wrote outside the project this session, newest first. */
+  outside: readonly string[] = [],
+  /** The last search inside files. */
+  contentHits: ContentHits | null = null,
 ) {
   const query = files.query ?? ''
   const searching = query.trim() !== ''
@@ -504,13 +565,15 @@ export function filesView(
                 </Box>
               )}
           </Box>,
-        branchChips(els, git, gitLog, files.gitOpen === true, actions),
+        branchChips(els, git, gitLog, files.gitOpen === true, actions, outside, files.outsideOpen === true),
       ], width < NARROW_COLUMNS, stage, working, tests, helperStrip(els, crew, () => actions.agents()), actions.dismissTests)}
       {Input && !preview && (
         <Box key="search-row" flexDirection="row" gap={1}>
           <Box key="search-box" flexGrow={1} flexDirection="column">
-            <Input key="search" placeholder="Search files" value={query} onInput={(v: string) => actions.search(v)} onSubmit={(v: string) => actions.search(v)} />
+            <Input key="search" placeholder={files.contents ? 'Search inside files' : 'Search files'} value={query} onInput={(v: string) => actions.search(v)} onSubmit={(v: string) => actions.submit(v)} />
           </Box>
+          {/* The search looks at file names, or inside the files with this on. */}
+          <Button key="search-contents" label="Contents" plain {...(files.contents ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => actions.setContents(files.contents !== true)} />
           {searching && <Button key="search-clear" label="✕" plain dimColor onPress={() => actions.search('')} />}
         </Box>
       )}
@@ -536,7 +599,7 @@ export function filesView(
         </Box>
       ) : null}
       {/* A file shown in the pane takes the tree's place; ← files brings the tree back as it was. */}
-      {preview ? previewView(els, root, preview, actions.previewing, flash[lower(preview.path)] ? TONE_COLOR[flash[lower(preview.path)]!] : undefined) : searching ? searchResults(els, query, searchIndex, actions) : (
+      {preview ? previewView(els, root, preview, actions.previewing, flash[lower(preview.path)] ? TONE_COLOR[flash[lower(preview.path)]!] : undefined) : searching ? (files.contents ? contentResults(els, query, contentHits, actions) : searchResults(els, query, searchIndex, actions)) : (
       <Box key="tree" flexDirection="column">
       {/* The tree's two views: the whole project, or the way down to what Claude touches now. */}
       {/* Tabs, drawn by a Client so the chosen one shows (a Button's colours are dropped on the desktop);

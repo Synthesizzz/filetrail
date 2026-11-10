@@ -38,11 +38,13 @@ export type WorldOptions = {
   agents?: { id: string; type: string; description: string; status: string }[]
   /** What a command other than git ends with, by its argv: an exit code and what it wrote to stderr (the default: 0 and nothing). */
   exits?: (argv: string[]) => { exitCode: number; stderr?: string } | undefined
+  /** What a content search (`git grep` or `grep`) answers, by its argv; undefined lets the command fall through as it would without this. */
+  grep?: (argv: string[]) => { stdout: string; exitCode?: number } | undefined
 }
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [], unreadableKeys = [], agents = [], exits }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [], unreadableKeys = [], agents = [], exits, grep }: WorldOptions = {}) {
   mock.env(on, env)
   // A subagent starts: the engine answers its id, as it did on a real one (`ag1`, `ag2`, ...).
   let spawned = 0
@@ -116,6 +118,8 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     const argv: string[] = e.argv
     ran.push(argv)
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    const searched = (argv[0] === 'grep' || (argv[0] === 'git' && argv[1] === 'grep')) ? grep?.(argv) : undefined
+    if (searched) return out(searched.stdout, searched.exitCode ?? 0)
     // Openers (cmd /c start, open, xdg-open) succeed; uname says Linux.
     if (argv[0] === 'uname') return out('Linux\n')
     if (argv[0] !== 'git') {
