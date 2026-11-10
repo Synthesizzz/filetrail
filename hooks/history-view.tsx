@@ -6,8 +6,8 @@ import type { EngineInterface } from 'claude-code'
 import type { Blocked, DiffLine, HistoryView, Step, Turn } from '../types'
 import { KIND_LABEL } from './blocked'
 import { EDIT_TOOLS } from './history'
-import { TONE_SHIMMER } from './files-view'
-import { clip, clockOf, dayLabel, formatAt, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS } from './paths'
+import { SELECTED_BG, TONE_SHIMMER } from './files-view'
+import { clip, clipCells, clockOf, dayLabel, formatAt, gapMinutes, gapText, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS, wrapLines } from './paths'
 
 export { dayLabel, formatAt }
 import { rowPresses } from './presses'
@@ -187,8 +187,54 @@ export function titleSegs(turn: Turn, now: number, liveId: string | null, select
   if (selected) segs.push({ t: '› ', c: 'claude', b: true })
   segs.push(isLive ? { t: when, c: 'claude', b: true, sh: TONE_SHIMMER.write } : { t: when, c: TIME_COLOR })
   const lead = segs.reduce((n, s) => n + s.t.length, 0) + 2
-  segs.push({ t: NBSP + NBSP + clip(turn.prompt || '(no prompt)', Math.max(8, budget - lead)), ...(isLive || selected ? { b: true } : {}) })
+  segs.push({ t: NBSP + NBSP + clipCells(turn.prompt || '(no prompt)', Math.max(8, budget - lead)), ...(isLive || selected ? { b: true } : {}) })
   return segs
+}
+
+/** The dot of a turn, smallest to largest: no edit, 1 to 2, 3 to 9, 10 or more. */
+export const DOT_GLYPHS = ['·', '•', '●', '⬤'] as const
+
+/** The colour of a turn with no edit: a grey that reads on light and dark backgrounds alike. */
+export const QUIET_COLOR = '#6b7280'
+
+/**
+ * A turn's dot on the spine: its size by the edits the turn made, its colour by how it
+ * ended: Claude's orange while it runs, red when an edit was not applied, orange when
+ * a call was blocked, green when every edit went through, grey when it touched no file.
+ */
+export function dotOf(turn: Turn, isLive: boolean): { glyph: string; color: string; level: 0 | 1 | 2 | 3 } {
+  const n = turn.steps.length
+  const level = n >= 10 ? 3 : n >= 3 ? 2 : n >= 1 ? 1 : 0
+  const blocked = blockedCount(turn)
+  const color = isLive
+    ? 'claude'
+    : summarize(turn).problems ? 'error' : blocked ? 'warning' : n ? 'success' : QUIET_COLOR
+  return { glyph: DOT_GLYPHS[level], color, level }
+}
+
+export type DayTotals = { label: string; turns: number; add: number; del: number }
+
+/** What each day on show holds, in the order the days first come in `turns`: its turns and the lines they added and removed. */
+export function dayTotals(turns: readonly Turn[], now: number): DayTotals[] {
+  const days = new Map<string, DayTotals>()
+  for (const t of turns) {
+    const label = dayLabel(t.at, now)
+    const day = days.get(label) ?? { label, turns: 0, add: 0, del: 0 }
+    const s = summarize(t)
+    day.turns++
+    day.add += s.add
+    day.del += s.del
+    days.set(label, day)
+  }
+  return [...days.values()]
+}
+
+/** Columns the spine takes beside the text: the dot's and the space after it. */
+export const SPINE_COLUMNS = 2
+
+/** The bars under a dot for a row `lines` lines high; one more reaches the next row's dot, when another row follows. */
+export function railBars(lines: number, joins: boolean): string {
+  return Array.from({ length: Math.max(0, lines - 1) + (joins ? 1 : 0) }, () => '│').join('\n')
 }
 
 /** A turn's summary as coloured runs: counts dim, lines added green, removed red, edits not applied yellow. */
@@ -223,9 +269,12 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
   const Client = 'Client' in els ? els.Client : undefined
   const { set } = actions
   const saved = turns.filter(t => t.id !== liveId).length
-  // A title gets two lines of the column at most.
-  const budget = Math.max(24, opts.width * 2 - 4)
-  const title = (turn: Turn) => clip(turnTitle(turn, now, liveId), budget)
+  // The text sits beside the spine, so it has that much less of the column; a title gets two of its lines at most.
+  const room = Math.max(8, opts.width - SPINE_COLUMNS)
+  const budget = Math.max(24, room * 2 - 4)
+  const title = (turn: Turn) => clipCells(turnTitle(turn, now, liveId), budget)
+  const totals = new Map(dayTotals(turns, now).map(d => [d.label, d]))
+  const newest = [...turns].reverse()
   if (!turns.length) {
     return (
       <Box key="timeline" flexDirection="column">
@@ -240,29 +289,63 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
         <Text dimColor>{saved} turn{saved === 1 ? '' : 's'}{liveId ? ' · 1 running' : ''}{hidden ? ` · ${hidden} hidden (git-ignored files)` : ''}</Text>
         <Button key="export" label="Export" hotkey="e" dimColor onPress={() => actions.exportAll()} />
       </Box>
-      {[...turns].reverse().map((turn, k, newest) => {
+      {newest.map((turn, k) => {
         const isLive = turn.id === liveId
         const isSelected = turn.id === opts.selected
         const key = `turn-${turn.id}`
         const open = () => set({ turn: turn.id, file: null, step: 0 })
         const segs = titleSegs(turn, now, liveId, isSelected, budget)
         if (Client) rowPresses.set(key, open)
-        // A header where the day changes, as the card's TOUCHED caption is drawn.
+        // A header where the day changes, with what the day held, as the card's TOUCHED caption is drawn.
         const day = dayLabel(turn.at, now)
-        const newDay = k === 0 || dayLabel(newest[k - 1]!.at, now) !== day
+        const newer = newest[k - 1]
+        const older = newest[k + 1]
+        const newDay = !newer || dayLabel(newer.at, now) !== day
+        const joins = !!older && dayLabel(older.at, now) === day
+        // Time between this turn and the one above it, said when it was long enough to count.
+        const gap = newDay || !newer ? '' : gapText(gapMinutes(newer.at, turn.at))
+        const dot = dotOf(turn, isLive)
+        // The spine runs beside the text as high as the text is: the title and the summary, wrapped as the pane wraps them.
+        const lines = wrapLines(segs.map(s => s.t).join(''), room) + wrapLines(summaryText(turn) + (isLive ? 'working · ' : ''), room)
+        const total = totals.get(day)
         return (
-          <Box key={`row-${turn.id}`} flexDirection="column" marginBottom={1}>
-            {newDay ? <Text size="caption" weight="semibold" dimColor>{day.toUpperCase()}</Text> : null}
-            {/* A Client, as in the Files tree: a desktop Button drops the colours of the Text in it. */}
-            {Client
-              ? <Client key={key} module="./row.tsx" width="100%" props={{ segs, wrap: true, hoverAt: segs.length - 1 } satisfies RowProps} />
-              : (
-                <Button key={key} plain onPress={open}>
-                  {isSelected ? '› ' : ''}
-                  <Text wrap="wrap" {...(isLive ? { color: 'claude' as const } : {})} {...(isLive || isSelected ? { weight: 'semibold' as const } : {})}>{title(turn)}</Text>
-                </Button>
-              )}
-            {summaryLine(els, turn, isLive)}
+          <Box key={`row-${turn.id}`} flexDirection="column">
+            {newDay && total
+              ? (
+                <Box key={`day-${turn.id}`} flexDirection="row" flexWrap="wrap" gap={1}>
+                  <Text size="caption" weight="semibold" dimColor>{day.toUpperCase()}</Text>
+                  <Text size="caption" dimColor>{`${total.turns} turn${total.turns === 1 ? '' : 's'}`}</Text>
+                  {total.add || total.del ? <Text size="caption" color="success">{`+${total.add}`}</Text> : null}
+                  {total.add || total.del ? <Text size="caption" color="error">{`-${total.del}`}</Text> : null}
+                </Box>
+              )
+              : null}
+            {gap
+              ? (
+                <Box key={`gap-${turn.id}`} flexDirection="row">
+                  <Box key="gap-rail" flexDirection="column" width={SPINE_COLUMNS}><Text color={QUIET_COLOR}>│</Text></Box>
+                  <Text size="caption" dimColor>{gap}</Text>
+                </Box>
+              )
+              : null}
+            <Box key={`spine-${turn.id}`} flexDirection="row">
+              <Box key={`rail-${turn.id}`} flexDirection="column" width={SPINE_COLUMNS}>
+                <Text key={`dot-${turn.id}`} color={dot.color}>{dot.glyph}</Text>
+                {lines > 1 || joins ? <Text key={`bars-${turn.id}`} color={dot.color}>{railBars(lines, joins)}</Text> : null}
+              </Box>
+              <Box key={`body-${turn.id}`} flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} paddingBottom={1} {...(Client && isSelected ? { backgroundColor: SELECTED_BG } : {})}>
+                {/* A Client, as in the Files tree: a desktop Button drops the colours of the Text in it. */}
+                {Client
+                  ? <Client key={key} module="./row.tsx" width="100%" props={{ segs, wrap: true, hoverAt: segs.length - 1 } satisfies RowProps} />
+                  : (
+                    <Button key={key} plain onPress={open}>
+                      {isSelected ? '› ' : ''}
+                      <Text wrap="wrap" {...(isLive ? { color: 'claude' as const } : {})} {...(isLive || isSelected ? { weight: 'semibold' as const } : {})}>{title(turn)}</Text>
+                    </Button>
+                  )}
+                {summaryLine(els, turn, isLive)}
+              </Box>
+            </Box>
           </Box>
         )
       })}

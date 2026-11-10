@@ -129,7 +129,8 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 
 ### The History tab
 
-- A **timeline** of the turns that changed files, newest first, grouped by day (`TODAY`, `YESTERDAY`, `OCT 14`). Each turn shows the time, the first line of your prompt, the files, and `+N -N`. Edits that were refused or failed are counted separately, in yellow, and so is a turn's `N blocked` (see below).
+- A **timeline** of the turns that changed files, newest first, grouped by day. Each day's header says what it held (`TODAY 7 turns +171 -61`). Each turn shows the time, the first line of your prompt, the files, and `+N -N`. Edits that were refused or failed are counted separately, in yellow, and so is a turn's `N blocked` (see below).
+- A **spine** runs down the left of the timeline, a dot for each turn. The dot's size says how many edits the turn made (`·` none, `•` 1 or 2, `●` 3 to 9, `⬤` 10 or more) and its colour how it went: green when every edit went through, red when one was not applied, orange when a call was blocked, grey when the turn touched no file, and Claude's orange for the turn that is running. Between two turns 8 minutes or more apart the spine says how long (`23 min earlier`, `1 h 5 min earlier`).
 - **Blocked calls:** every tool call of a turn that was refused or ended in an error (Bash, Read, Edit and the rest) is kept with the tool, what it named and the reason the engine gave, and marked `refused (hook)`, `refused (Claude Code)` or `failed`. Open the turn to see the list under its edits. A turn with no edits gets a row, `no file edits · 1 blocked`, only when something was refused; plain failures (a `grep` that finds nothing, a failing test) are kept with a turn that has edits or a refusal and make no row of their own. Those rows are kept 10 at a time, apart from the 50 turns of edits, so they never push an edit turn out. The engine reports every stopped call in one error shape, so the split between a hook and Claude Code's own refusal is read from the words of the reason: a hook's starts with `PreToolUse:<tool> hook error`, and Claude Code's permission refusals say a permission was denied or not granted.
 - While Claude works, the current turn sits on top as **Now**, growing with each edit.
 - **Open a turn** to step through its edits one diff at a time: numbered cells, Prev and Next, the file, tool and line, and the diff. Long diffs fold after 20 lines, with Show all.
@@ -139,7 +140,7 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 - **Export** writes the whole history as Markdown to `~/.claude/filetrail/exports/`.
 - Files git ignores (like a local notes file) are left out, and the header says how many turns were hidden.
 - History is kept across sessions for each project: the last 50 turns, up to 200 diff lines per edit, and 3 MiB in total across all projects (the least recently used project is dropped first).
-- On a wide pane (about 100 columns or more), History splits in two: turns on the left, the picked turn on the right.
+- On a wide pane (about 100 columns or more), History splits in two: turns on the left, the picked turn on the right, with a soft fill behind the picked row.
 
 ### The Agents tab
 
