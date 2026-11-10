@@ -20,7 +20,8 @@ test('Now shows only the way down to this turn\'s files, keeps them once the tur
   // All, the default: the root's folders and files.
   expect(await shows(ui, 'C:/work/demo/docs')).toBe(true)
 
-  await ui.press({ key: 'mode-now' })
+  // The tabs are a Client: a press posts the view it chose.
+  await ui.post({ mode: 'now' }, { in: 'tree-modes' })
   expect(store.get('filetrail:treeMode')).toBe('now')
   expect(await hasText(ui, "Nothing touched this turn yet: Claude's files show here as it reads and edits them.")).toBe(true)
 

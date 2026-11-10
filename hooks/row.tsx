@@ -16,17 +16,20 @@ import type { ClientModule } from 'claude-code'
  * `name` marks the run cut first when the row is too long (the second run if none is);
  * `opt` runs (a file's time) give way before anything else. `bg` fills the run (a pill, a badge).
  * `ext` keeps a cut name's extension whole, cutting before it instead of at the end.
+ * `pad` runs are blank room that lines a column up with the rows above and below: a row too
+ * long for its width gives them up (its values then sit close) before its name is cut.
  */
-export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean; bg?: string; ext?: boolean }
+export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean; bg?: string; ext?: boolean; pad?: boolean }
 /**
  * `wrap` lets the runs flow onto further lines (a turn's title) instead of fitting
  * one line (a tree row). `hoverAt` is the run underlined under the pointer: the
  * name, unless said. `bg` fills the row (the selected one). `mono` sets every run in
- * the monospace face, so columns line up from row to row. `reveal` types the row in, left to
+ * the monospace face, so columns line up from row to row. `inset` keeps that many columns free
+ * at the right edge (a tree row's, for the pane's scrollbar). `reveal` types the row in, left to
  * right, when it first shows (a touched file as the card's handle lets more in), rather
  * than have it pop in whole: a list can only grow a line at a time.
  */
-export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number; bg?: string; mono?: boolean; reveal?: boolean }
+export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number; bg?: string; mono?: boolean; reveal?: boolean; inset?: number }
 /** What a row posts: a click, the second click of a double-click, a right-click (shift for the whole path) or a click with Ctrl held. */
 export type RowPost = { press: true } | { open: true } | { copy: true; full: boolean } | { reveal: true }
 
@@ -99,14 +102,16 @@ export const nameAt = (segs: readonly Seg[]) => Math.max(1, segs.findIndex(s => 
 
 /**
  * Fits a row into `columns` cells, since a row never wraps: `opt` runs go first, then
- * the name is cut, down to MIN_NAME, then the trailing counts and git letter give way
+ * `pad` runs (blank room that aligns columns), then the name is cut, down to MIN_NAME, then the trailing counts and git letter give way
  * from the end, then the name is cut further. What comes before the name and the tone
  * word right after it (when lit) always stay. 0 columns (not laid out yet) fits all.
  */
 export function fitRow(segs: readonly Seg[], columns: number): Seg[] {
   const total = (xs: readonly Seg[]) => xs.reduce((n, s) => n + width(s), 0)
   if (columns <= 0 || total(segs) <= columns || segs.length < 2) return [...segs]
-  const out = segs.filter(s => !s.opt)
+  const timeless = segs.filter(s => !s.opt)
+  if (total(timeless) <= columns) return timeless
+  const out = timeless.filter(s => !s.pad)
   if (total(out) <= columns) return out
   const at = nameAt(out)
   const kept = out.length > at + 1 && out[at + 1]!.sh ? at + 2 : at + 1
@@ -178,7 +183,9 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
   // Once a click gave it the focus, Enter presses it again, as on a Button.
   surface.onKey(e => { if (e.key === 'return') surface.post({ press: true } satisfies RowPost) })
   const hoverAt = props.hoverAt ?? nameAt(props.segs)
-  const whole = props.wrap ? props.segs : fitRow(props.segs, surface.columns)
+  const inset = props.inset ?? 0
+  // A row not laid out yet (0 columns) fits all, as before.
+  const whole = props.wrap ? props.segs : fitRow(props.segs, surface.columns > 0 ? Math.max(1, surface.columns - inset) : 0)
   const fitted = state.shown === undefined ? whole : revealRuns(whole, state.shown)
   const runs = fitted.map((s, i) => {
     const style = {
@@ -207,7 +214,8 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
       {/* As filetree lays a row out: the left side gives way (clipped), the badges keep their width. */}
       <Box flexDirection="row" flexShrink={1} overflow="hidden">{left}</Box>
       {right.length ? <Box flexGrow={1} /> : null}
-      {right.length ? <Box flexDirection="row" flexShrink={0}>{right}</Box> : null}
+      {/* The scrollbar's room, after the last value: a row with no value has nothing for it to lie over. */}
+      {right.length ? <Box flexDirection="row" flexShrink={0}>{right}{inset ? <Text mono>{' '.repeat(inset)}</Text> : null}</Box> : null}
     </Box>
   )
 }

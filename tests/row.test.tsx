@@ -59,7 +59,9 @@ test('a narrow row fits its region: the Client is as wide as the pane and cuts i
   await ui.resize({ columns: 20, rows: 1, in: key })
   const line = await rowText(ui, key)
   expect([...line].length).toBeLessThanOrEqual(20)
-  expect(line).toMatch(/^ {2}• a-rather-long-f…$/)
+  // Two of the 20 columns are kept free at the right, for the pane's scrollbar.
+  expect([...line].length).toBeLessThanOrEqual(18)
+  expect(line).toMatch(/^ {2}• a-rather-long…$/)
   await ui.resize({ columns: 80, rows: 1, in: key })
   expect(await rowText(ui, key)).toBe('  • a-rather-long-file-name-for-a-narrow-dock.tsx')
   await ui.unmount()
@@ -79,6 +81,17 @@ test('right-hand runs sit after a spacer, at the row\'s edge', async ($, on) => 
   await ui.unmount()
 })
 
+test('a tree row keeps its last two columns free, so the scrollbar never lies over a value', async ($, on) => {
+  const { clock } = world(on, { dirs: { 'C:\\work\\demo': [['a.ts', 'file']] }, git: { top: 'C:/work/demo', status: '## main\0?? a.ts\0', numstat: '' } })
+  await $.session.start(START)
+  await clock.advance(1000)
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
+  const key = 'row-c:/work/demo/a.ts'
+  const line = await rowText(ui, key)
+  expect(line).toMatch(/ U {2}$/)
+  await ui.unmount()
+})
+
 test('fitRow drops a file\'s time before cutting the name, and finds the name by its mark', () => {
   const row: Seg[] = [{ t: '  ' }, { t: '· ' }, { t: 'notes-about-it.md', name: true }, { t: ' Oct 16 10:00', right: true, opt: true }]
   expect(text(fitRow(row, 40))).toBe('  · notes-about-it.md Oct 16 10:00')
@@ -90,6 +103,23 @@ test('fitRow drops a folder marked opt before cutting the name, keeping the pill
   const row: Seg[] = [{ t: ' MD ' }, { t: ' notes.md', name: true }, { t: ' trail-demo/deep', opt: true }, { t: ' Reading ', right: true }]
   expect(fitRow(row, 40).map(s => s.t)).toEqual([' MD ', ' notes.md', ' trail-demo/deep', ' Reading '])
   expect(fitRow(row, 24).map(s => s.t)).toEqual([' MD ', ' notes.md', ' Reading '])
+})
+
+test('fitRow gives up padding before cutting the name, and a file\'s time before padding', () => {
+  const NB = ' '
+  const row: Seg[] = [
+    { t: '  ' }, { t: 'notes.md', name: true },
+    { t: ' ', right: true }, { t: NB.repeat(4), right: true, pad: true }, { t: '+3', right: true },
+    { t: ' ', right: true }, { t: NB.repeat(3), right: true, pad: true }, { t: '-1', right: true },
+  ]
+  // 2 + 8 + 7 + 6 = 23 with its padding, 17 without.
+  expect(fitRow(row, 23)).toEqual(row)
+  expect(fitRow(row, 20).map(s => s.t)).toEqual(['  ', 'notes.md', ' ', '+3', ' ', '-1'])
+  // Below that the name goes, as before.
+  expect(fitRow(row, 14).map(s => s.t)).toEqual(['  ', 'notes.md', ' ', '+3', ' '])
+  // A time (opt) goes first: the padding stays while that is enough.
+  const dated: Seg[] = [...row, { t: ' 2026-11-10 21:40', right: true, opt: true }]
+  expect(fitRow(dated, 23)).toEqual(row)
 })
 
 test('fitRow cuts a name marked ext in its middle, so the extension stays whole', () => {

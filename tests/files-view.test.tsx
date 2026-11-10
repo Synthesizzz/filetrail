@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Turn } from '../types'
-import { FOLDER_COLOR, folderColor, GIT_HEX, SELECTED_BG, typeColor } from '../hooks/files-view'
+import { FOLDER_COLOR, GIT_HEX, SELECTED_BG, typeColor } from '../hooks/files-view'
 import { DONE, KEY, PANE, START, hasRow, hasText, pressRow, rowRuns, rowText, textOf, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
@@ -42,29 +42,33 @@ test('Files: the root listing, git status, line counts and edit badges', { timeo
 
   // filetree's way, at the right edge: a folder sums its files' lines and counts its changes
   // by kind (Claude's edits a ● before them); a folder untracked as a whole, and each file, a letter.
-  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ ■ src\/ ● \+3 -1 \?:1 M:1$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▸ ■ src\/ ● \+3 -1 \?:1 M:1 {2}$/)
   const src = await rowRuns(ui, rowKey('C:/work/demo/src'))
-  expect(src.find(r => r.text === ' M:1')?.props.color).toBe(GIT_HEX.changed)
-  expect(src.find(r => r.text === ' ?:1')?.props.color).toBe(GIT_HEX.added)
+  expect(src.find(r => r.text === 'M:1')?.props.color).toBe(GIT_HEX.changed)
+  expect(src.find(r => r.text === '?:1')?.props.color).toBe(GIT_HEX.added)
   expect(src.find(r => r.text === 'src/')?.props.color).toBe(GIT_HEX.changed)
   // Monospace rows, as filetree's: the badges and dates line up in a column.
   expect(((await ui.find({ key: rowKey('C:/work/demo/src') }))?.props as any)?.props?.mono).toBe(true)
   expect(src.find(r => r.text === '■ ')?.props.color).toBe(FOLDER_COLOR)
-  expect(await rowText(ui, rowKey('C:/work/demo/tmp'))).toMatch(/^▸ ■ tmp\/ U$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/tmp'))).toMatch(/^▸ ■ tmp\/ +U {2}$/)
+  // The values sit in columns: the U ends where the folder's last count does.
+  expect([...(await rowText(ui, rowKey('C:/work/demo/tmp')))].length).toBe([...(await rowText(ui, rowKey('C:/work/demo/src')))].length)
+  // A file git has no change for shows nothing at the right (no date), and keeps the room for its name.
+  expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toBe('  • README.md')
   // The branch line: head, upstream, and the repo's changes at the right.
   // The repo's changes are the chip beside it.
   expect(await ui.find({ type: 'Text', text: '+3 -1 ?:2 M:1' })).toBeDefined()
 
   // Opening it lists it and shows each file's status, counts and edits.
   await pressRow(ui, rowKey('C:/work/demo/src'))
-  expect(await rowText(ui, rowKey('C:/work/demo/src/a.ts'))).toMatch(/^\s+• a\.ts ●2 \+3 -1 M$/)
-  expect(await rowText(ui, rowKey('C:/work/demo/src/new.ts'))).toMatch(/^\s+• new\.ts U$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src/a.ts'))).toMatch(/^\s+• a\.ts ●2 \+3 -1 +M {2}$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src/new.ts'))).toMatch(/^\s+• new\.ts +U {2}$/)
   const newTs = await rowRuns(ui, rowKey('C:/work/demo/src/new.ts'))
-  expect(newTs.find(r => r.text === ' U')?.props.color).toBe(GIT_HEX.added)
+  expect(newTs.find(r => r.text === 'U')?.props.color).toBe(GIT_HEX.added)
   // The marker takes the file type's colour; the name keeps git's.
   expect(newTs.find(r => r.text.startsWith('•'))?.props.color).toBe(typeColor('new.ts'))
   expect(newTs.find(r => r.text === 'new.ts')?.props.color).toBe(GIT_HEX.added)
-  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▾ ■ src\/ \+3 -1 \?:1 M:1$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/^▾ ■ src\/ +\+3 -1 \?:1 M:1 {2}$/)
   // The indent is non-breaking: the desktop collapses leading plain spaces (seen live: every row flush left);
   // a narrow one follows it, before the icon.
   expect(textOf(await ui.drawn({ in: rowKey('C:/work/demo/src/a.ts') })).slice(0, 4)).toBe('\u00a0'.repeat(3) + '\u202f')
@@ -146,7 +150,7 @@ test('a count of zero is left out: lines only added show +N without -0', async (
   await $.session.start(START)
   await clock.advance(1000)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
-  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/src\/ \+2 M:1$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/src'))).toMatch(/src\/ \+2 M:1 {2}$/)
   expect(await ui.find({ type: 'Text', text: '+2 M:1' })).toBeDefined()
   await ui.unmount()
 })
@@ -158,23 +162,46 @@ test('typeColor: a colour per file type, by extension and ignoring case; none fo
   for (const p of ['Makefile', 'logo.png', '.env']) expect([p, typeColor(p)]).toEqual([p, undefined])
 })
 
-test('a folder\'s marker takes its place among its siblings\' colour, so neighbours differ; its name keeps git\'s', async ($, on) => {
-  expect(folderColor(0)).toBe(FOLDER_COLOR)
-  expect(folderColor(1)).not.toBe(folderColor(0))
-  expect(folderColor(5)).toBe(folderColor(0))
-  const { clock } = world(on, { dirs: { 'C:/work/demo': [['docs', 'dir'], ['src', 'dir'], ['a.md', 'file']], 'C:/work/demo/src': [['deep', 'dir']], 'C:/work/demo/src/deep': [['x.ts', 'file']] } })
+test('colour is quiet: one ■ colour for every folder, names plain unless git or Claude colour them, node_modules and dot folders dim', async ($, on) => {
+  const { clock } = world(on, {
+    dirs: {
+      'C:/work/demo': [['.config', 'dir'], ['docs', 'dir'], ['node_modules', 'dir'], ['src', 'dir'], ['a.md', 'file']],
+      'C:/work/demo/src': [['deep', 'dir']],
+      'C:/work/demo/src/deep': [['x.ts', 'file']],
+    },
+  })
   await $.session.start(START)
   await clock.settle()
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await pressRow(ui, rowKey('C:/work/demo/src'))
-  const marker = async (path: string) => (await rowRuns(ui, rowKey(path))).find(r => r.text.startsWith('■'))?.props.color
-  expect(await marker('C:/work/demo/docs')).toBe(folderColor(0))
-  expect(await marker('C:/work/demo/src')).toBe(folderColor(1))
-  // The first folder inside src: the first colour again.
-  expect(await marker('C:/work/demo/src/deep')).toBe(folderColor(0))
-  // With nothing for git to say, a folder's name takes its marker's colour too.
+  await pressRow(ui, rowKey('C:/work/demo/src/deep'))
+  const run = async (path: string, match: (text: string) => boolean) => (await rowRuns(ui, rowKey(path))).find(r => match(r.text))?.props
+  const marker = (path: string) => run(path, t => t.startsWith('■'))
+  const name = (path: string, text: string) => run(path, t => t === text)
+  // Folders side by side and nested all have the one colour.
+  for (const p of ['docs', 'src', 'src/deep']) expect([p, (await marker(`C:/work/demo/${p}`))?.color]).toEqual([p, FOLDER_COLOR])
+  // With nothing for git to say, names have no colour of their own: a folder's, a file's in it, one at the root.
+  for (const [p, n] of [['docs', 'docs/'], ['src', 'src/'], ['src/deep', 'deep/'], ['src/deep/x.ts', 'x.ts'], ['a.md', 'a.md']] as const) {
+    expect([p, (await name(`C:/work/demo/${p}`, n))?.color]).toEqual([p, undefined])
+    expect([p, (await name(`C:/work/demo/${p}`, n))?.dimColor]).toEqual([p, undefined])
+  }
+  // Generated and hidden folders step back: the marker and the name are dim.
+  for (const [p, n] of [['node_modules', 'node_modules/'], ['.config', '.config/']] as const) {
+    expect([p, (await marker(`C:/work/demo/${p}`))?.dimColor]).toEqual([p, true])
+    expect([p, (await name(`C:/work/demo/${p}`, n))?.dimColor]).toEqual([p, true])
+  }
+  expect((await marker('C:/work/demo/docs'))?.dimColor).toBeUndefined()
+  await ui.unmount()
+})
+
+test('git and Claude still colour a name in the quiet tree', async ($, on) => {
+  const { clock } = world(on, { dirs: DIRS, git: GIT, stored: { [KEY]: EDITED } })
+  await $.session.start(START)
+  await clock.advance(1000)
+  const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   const name = async (path: string, text: string) => (await rowRuns(ui, rowKey(path))).find(r => r.text === text)?.props.color
-  expect(await name('C:/work/demo/src', 'src/')).toBe(folderColor(1))
-  expect(await name('C:/work/demo/docs', 'docs/')).toBe(folderColor(0))
+  // src has a changed file in it (yellow), tmp is untracked (green): both git's colours, not a folder palette.
+  expect(await name('C:/work/demo/src', 'src/')).toBe(GIT_HEX.changed)
+  expect(await name('C:/work/demo/tmp', 'tmp/')).toBe(GIT_HEX.added)
   await ui.unmount()
 })

@@ -143,7 +143,7 @@ test('a Write lights up once it went through; a denied one does not', async ($, 
   await clock.settle()
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   // The running turn's edits count at once (●1), before the turn is saved.
-  expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toMatch(/README\.md · writing ●1$/)
+  expect(await rowText(ui, rowKey('C:/work/demo/README.md'))).toMatch(/README\.md · writing ●1 {2}$/)
   // The name and the word carry the tone's colour, drawn by the row's Client.
   const runs = await rowRuns(ui, rowKey('C:/work/demo/README.md'))
   expect(runs.find(r => r.text === 'README.md')?.props).toMatchObject({ color: 'claude', weight: 'semibold' })

@@ -1,6 +1,5 @@
 import { expect, test } from 'claude-code/testing'
 
-import { folderColor } from '../hooks/files-view'
 import { PANE, START, pressRow, rowRuns, world } from './world'
 
 const DIRS: Record<string, [string, 'file' | 'dir'][]> = {
@@ -41,15 +40,14 @@ test('every folder above Claude\'s file shimmers with it, in its tone; its word 
   await ui.unmount()
 })
 
-test('a file git has nothing to say about takes its folder\'s colour; one at the root stays plain', async ($, on) => {
+test('a file git has nothing to say about keeps the plain colour, in a folder or at the root', async ($, on) => {
   const { clock } = world(on, { dirs: DIRS, files: FILES })
   await $.session.start(START)
   await clock.settle()
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await pressRow(ui, 'row-c:/work/demo/src')
-  // src is the root's first folder; a.ts sits in it.
   const name = async (key: string, text: string) => (await rowRuns(ui, key)).find(r => r.text === text)?.props.color
-  expect(await name('row-c:/work/demo/src/a.ts', 'a.ts')).toBe(folderColor(0))
+  expect(await name('row-c:/work/demo/src/a.ts', 'a.ts')).toBeUndefined()
   expect(await name('row-c:/work/demo/readme.md', 'README.md')).toBeUndefined()
   await ui.unmount()
 })

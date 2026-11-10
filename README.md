@@ -85,7 +85,7 @@ At the top is a **card** showing what's happening right now. Roughly:
 - **TOUCHED:** the files Claude read, edited, committed or deleted this session, and any you deleted, newest first. Three are shown, with `+N more` for the rest (eight at most). Click a row to jump to it in the tree, double-click to view it, right-click to copy its path. A yellow flag in place of the word marks a file a shell command harmed (`Shrank −67%`, `Overwritten`, see [Good to know](#good-to-know)), and a `Δ` after a file Claude read says it has changed since (`Δ edited`, `Δ committed`, `Δ changed outside`).
 - **Resize the card:** hold the `─── ⋯ ───` bar along its bottom border and drag it down to list more touched files (up to eight), or up to list fewer, down to none. While you hold, the bar previews the size (`▼ 5 files · + c.md, b.md`); the list changes when you let go, the new files typing themselves in. The size is remembered.
 
-Under the card is the **file tree**, with two views you switch between with `All | Now` above it (your choice is remembered):
+Under the card is the **file tree**, with two views you switch between with the `All` and `Now` tabs above it (the chosen one has a fill, and `Now` shows how many files this turn holds; your choice is remembered; in the terminal the chosen one is in brackets):
 
 - **All:** the whole project, opened as you and Claude leave it.
 - **Now:** only the way down from the project folder to the files Claude reads, edits, commits or deletes in this turn, each folder on the way open. The folder Claude is working in right now shows whole, so you see its file's neighbours. Once the turn ends they stay on show, and the next turn starts empty. Press a folder there to see it in the All view.
@@ -93,11 +93,12 @@ Under the card is the **file tree**, with two views you switch between with `All
 In both views:
 
 - Folders open on a click. Dotfiles are dimmed and `.git` is hidden.
-- A folder's `■` is coloured by its place among the folders beside it (the first blue, then teal, violet, amber, rose, and round again), so neighbouring folders always differ. Its name takes the same colour, unless git has something to say about it (then git's colour wins, so changed folders still stand out). An unchanged file's name takes its folder's colour too; one at the project's top level stays plain.
+- Colour in the tree means git or Claude, so the rest is quiet: every folder's `■` is the one blue, and names are plain until git (or Claude) colours them. Dot folders and `node_modules` are dimmed, marker and name.
 - The `•` before a file takes its type's colour: blue TypeScript, gold JavaScript, teal Python, grey-blue Markdown and text, amber JSON/YAML/TOML, pink CSS, orange HTML and notebooks, purple SQL. Other files stay grey. The type badges in the TOUCHED list (`TS`, `MD`) use the same colours.
-- Git status colours each name (yellow modified, green new, red deleted). At the right edge are `+N -N` and a letter (`M`, `A`, `U` untracked, `D`, `R`, `C` conflict). A file with no changes shows when it last changed instead.
-- Folders add up what changed inside them: `?:n` new, `M:n` changed, `D:n` deleted.
+- Git status colours each name (yellow modified, green new, red deleted).
+- The right edge is four columns that line up from row to row: `●N`, `+N`, `-N`, then git's word. A file with no changes shows nothing there. The last two columns are kept free, so the scrollbar never lies over a value. In a pane too narrow for the columns, a row's values sit close together before its name is cut.
 - `●N` counts Claude's edits to a file. A closed folder shows `●` when something inside it was edited.
+- `+N -N` are the lines changed (a folder adds up its files') and the last column is a letter (`M`, `A`, `U` untracked, `D`, `R`, `C` conflict). A folder adds up what changed inside it instead: `?:n` new, `M:n` changed, `D:n` deleted.
 
 ### Following Claude
 

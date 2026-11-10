@@ -8,9 +8,12 @@ import { dirCounts, dirStatus, fileStatus, lineCounts, linesBelow, repoSummary }
 import type { DirCounts } from './git'
 import { relTo } from './history'
 import { staleLabel } from './stale'
-import { badgeColors, NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
+import { badgeColors, NARROW_COLUMNS, NBSP, NNBSP, splitPath } from './paths'
+import { rightSlots } from './columns'
+import type { Cell } from './columns'
 import type { RowProps, Seg } from './row'
-import { rowCopies, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
+import { modePresses, rowCopies, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
+import type { ModesProps } from './modes'
 import type { Tool, ToolsProps } from './tools'
 import type { HandleProps } from './handle'
 import { helperStrip } from './agents-view'
@@ -243,40 +246,30 @@ export function gitLetter(code: string): string {
   return code
 }
 
-/** The folder colour, filetree's accent: a blue that reads on light and dark backgrounds. */
+/**
+ * The folder colour, filetree's accent: a blue that reads on light and dark backgrounds. Every
+ * folder's ■ has it (the tree keeps colour for git and for Claude: seen live, a palette of
+ * folder colours read as status), and the name stays plain.
+ */
 export const FOLDER_COLOR = '#5b9bd5'
-/**
- * A folder marker's colour by its place among the folders beside it, so neighbours always
- * differ: the first filetree's blue, then teal, violet, amber and rose, round again past
- * five (seen live: by depth, the folders side by side at the top all came out one blue).
- * Soft and mid-dark, for light and dark panes alike; the folder's name keeps git's colour.
- */
-export const FOLDER_COLORS = [FOLDER_COLOR, '#3fb8af', '#9b87f5', '#d9a441', '#d97a9a'] as const
-
-/** The colour of a folder's ■, the `index`-th folder (from 0) in its parent's listing. */
-export function folderColor(index: number): string {
-  return FOLDER_COLORS[index % FOLDER_COLORS.length]!
-}
-
-/**
- * Each folder's place among the folders of its parent (lower-cased path to index), from the
- * listings: the same in the All tree and in Now, whatever of its siblings Now leaves out.
- */
-export function folderIndexes(listing: Readonly<Record<string, Entry[]>>): Map<string, number> {
-  const out = new Map<string, number>()
-  for (const entries of Object.values(listing)) entries.filter(e => e.kind === 'dir').forEach((e, k) => out.set(lower(e.path), k))
-  return out
-}
+/** Folders nobody reads: their ■ and name are dim, as a dot folder's are. */
+export const QUIET_DIRS: ReadonlySet<string> = new Set(['node_modules'])
+/** Columns kept free at the tree's right edge, so the pane's scrollbar does not lie over a value. */
+export const SCROLL_INSET = 2
 /** The selected row's fill: filetree's selection grey, at a third so the text stays legible in either theme. */
 export const SELECTED_BG = '#6b728055'
 
-/** A folder's counts by kind, at the right edge: new, changed, deleted, as filetree orders them. */
-function countSegs(n: DirCounts): Seg[] {
+/** A folder's counts by kind, new, changed, deleted, as filetree orders them; no space before. */
+function countRuns(n: DirCounts): Seg[] {
   const out: Seg[] = []
-  if (n.added) out.push({ t: `${NNBSP}?:${n.added}`, c: GIT_HEX.added, right: true })
-  if (n.changed) out.push({ t: `${NNBSP}M:${n.changed}`, c: GIT_HEX.changed, right: true })
-  if (n.deleted) out.push({ t: `${NNBSP}D:${n.deleted}`, c: GIT_HEX.deleted, right: true })
+  if (n.added) out.push({ t: `?:${n.added}`, c: GIT_HEX.added })
+  if (n.changed) out.push({ t: `M:${n.changed}`, c: GIT_HEX.changed })
+  if (n.deleted) out.push({ t: `D:${n.deleted}`, c: GIT_HEX.deleted })
   return out
+}
+/** The same at the right edge of a row, each after a narrow space. */
+function countSegs(n: DirCounts): Seg[] {
+  return countRuns(n).map(r => ({ ...r, t: `${NNBSP}${r.t}`, right: true }))
 }
 
 /**
@@ -444,7 +437,26 @@ export function filesView(
       || (r.entry.kind === 'dir' ? nowDirs : nowFiles).has(lower(r.entry.path)))
     : visibleRows(root, listing, files.expanded, files.hideDots === true)
   const shown = rows.slice(0, MAX_ROWS)
-  const folderAt = folderIndexes(listing)
+  // The right edge as columns: each row's values, then the slots they line up in (the widest
+  // value among the rows on show sets a slot's width).
+  const cellOf = ({ entry, isOpen }: (typeof shown)[number]): Cell => {
+    const isDir = entry.kind === 'dir'
+    const code = isDir ? dirStatus(git, entry.path) : fileStatus(git, entry.path)
+    const edits = isDir ? 0 : counts.get(lower(entry.path)) ?? 0
+    const sum = isDir ? linesBelow(git, entry.path) : lineCounts(git, entry.path)
+    const below = isDir ? dirCounts(git, entry.path) : null
+    // A folder's counts by kind, else a letter; a file with no change has nothing here (no date).
+    const word: Seg[] = below ? countRuns(below) : code ? [{ t: gitLetter(code), ...(statusColor(code) ? { c: statusColor(code)! } : {}) }] : []
+    return {
+      // Claude's edits to a file; a closed folder with edits inside shows a dim dot.
+      ...(edits ? { a: { t: `●${edits}`, c: 'claude' } } : isDir && !isOpen && hasEditsBelow(counts, entry.path) ? { a: { t: '●', c: 'claude', dim: true } } : {}),
+      // Only what is there, as filetree shows it: no +0 or -0.
+      ...(sum?.[0] ? { p: { t: `+${sum[0]}`, c: GIT_HEX.add } } : {}),
+      ...(sum?.[1] ? { m: { t: `-${sum[1]}`, c: GIT_HEX.del } } : {}),
+      ...(word.length ? { g: word } : {}),
+    }
+  }
+  const slots = rightSlots(shown.map(cellOf))
   // Every folder above a lit file shimmers with it, in its tone, so Claude's place reads from the top.
   const litAbove = new Map<string, Tone>()
   for (const [path, tone] of Object.entries(flash)) for (const d of foldersTo(root, path) ?? []) if (!litAbove.has(lower(d))) litAbove.set(lower(d), tone)
@@ -459,6 +471,8 @@ export function filesView(
     ...(files.selected !== null ? [{ id: 'go-selected', glyph: '⌖', hint: 'Go to the selected file', done: 'Back to the file', run: () => actions.goToSelected() }] : []),
   ]
   for (const t of tools) toolPresses.set(t.id, t.run)
+  modePresses.set('all', () => actions.setMode('all'))
+  modePresses.set('now', () => actions.setMode('now'))
 
   return (
     // Step-named gaps: the desktop sizes them on its own scale (seen live: rows and sections ran together),
@@ -514,22 +528,26 @@ export function filesView(
       {preview ? previewView(els, root, preview, actions.previewing, flash[lower(preview.path)] ? TONE_COLOR[flash[lower(preview.path)]!] : undefined) : searching ? searchResults(els, query, searchIndex, actions) : (
       <Box key="tree" flexDirection="column">
       {/* The tree's two views: the whole project, or the way down to what Claude touches now. */}
-      <Box key="tree-mode" flexDirection="row" gap={1} marginBottom={1}>
-        <Button key="mode-all" label="All" plain {...(now ? { dimColor: true } : { variant: 'primary' as const })} onPress={() => actions.setMode('all')} />
-        <Button key="mode-now" label="Now" plain {...(now ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => actions.setMode('now')} />
-      </Box>
+      {/* Tabs, drawn by a Client so the chosen one shows (a Button's colours are dropped on the desktop);
+          Buttons where there is none, the chosen one bracketed. */}
+      {Client
+        ? <Box key="tree-mode" marginBottom={1}><Client key="tree-modes" module="./modes.tsx" width="100%" props={{ mode: now ? 'now' : 'all', count: nowFiles.size, plain: terminal } satisfies ModesProps} /></Box>
+        : (
+          <Box key="tree-mode" flexDirection="row" gap={1} marginBottom={1}>
+            <Button key="mode-all" label={now ? 'All' : '[All]'} plain {...(now ? { dimColor: true } : { variant: 'primary' as const })} onPress={() => actions.setMode('all')} />
+            <Button key="mode-now" label={now ? '[Now]' : 'Now'} plain {...(now ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => actions.setMode('now')} />
+          </Box>
+        )}
       {!(lower(root) in listing) && <Text dimColor>Reading the folder…</Text>}
       {lower(root) in listing && rows.length === 0 && <Text dimColor>{now ? 'Nothing touched this turn yet: Claude\'s files show here as it reads and edits them.' : 'This folder is empty.'}</Text>}
       {/* Every row is drawn: the pane scrolls like a page when the tree is long. */}
-      {shown.map(({ entry, depth, isOpen }) => {
+      {shown.map(({ entry, depth, isOpen }, at) => {
         const isDir = entry.kind === 'dir'
         const code = isDir ? dirStatus(git, entry.path) : fileStatus(git, entry.path)
         const tone = flash[lower(entry.path)]
         // A folder above Claude's file shimmers as it does, its word left to the file.
         const above = isDir && !tone ? litAbove.get(lower(entry.path)) : undefined
         const color = tone ? TONE_COLOR[tone] : statusColor(code)
-        const edits = isDir ? 0 : counts.get(lower(entry.path)) ?? 0
-        const lines = isDir ? null : lineCounts(git, entry.path)
         const isSelected = lower(entry.path) === selected
         // A row that shimmers is drawn by a fresh instance, keyed by its tone: a surface's
         // clock may only start as an instance first draws (seen live: a row on show before
@@ -540,21 +558,20 @@ export function filesView(
         // The desktop draws no `inverse`: a selected file also gets a marker and bold, which every surface shows.
         // The indent is non-breaking spaces in a monospace run: the desktop collapses leading plain spaces,
         // and a proportional font would set the arrow and the blank slot at different widths.
-        // As filetree draws on the desktop (its Nerd Font icons have no glyph there): a blue
-        // ■ for a folder in its place's colour, a • for a file in its type's colour (grey when not listed, the name
-        // keeping git's colour); a dotfile's name and marker are dimmed unless git or Claude colours it.
+        // As filetree draws on the desktop (its Nerd Font icons have no glyph there): a ■ for a
+        // folder (one colour for all), a • for a file in its type's colour (grey when not listed).
+        // The name keeps git's colour (or Claude's) and is plain otherwise. A dotfile, and a folder
+        // nobody reads (node_modules), are dimmed, marker and name, unless git or Claude colours the name.
         const dotfile = entry.name.startsWith('.')
+        const quiet = dotfile || (isDir && QUIET_DIRS.has(entry.name))
         const segs: Seg[] = [
           // The selected row is filled where a Client draws it; a marker stands in elsewhere.
           { t: NBSP.repeat(2 * depth) + (isDir ? (isOpen ? '▾' : '▸') : isSelected && (!Client || terminal) ? '›' : NBSP) + NNBSP, mono: true },
-          isDir ? { t: '■' + NNBSP, c: folderColor(folderAt.get(lower(entry.path)) ?? 0), dim: dotfile }
+          isDir ? { t: '■' + NNBSP, c: FOLDER_COLOR, dim: quiet }
             : { t: '•' + NNBSP, ...(!dotfile && typeColor(entry.path) ? { c: typeColor(entry.path)! } : { dim: true }) },
           {
             t: entry.name + (isDir ? '/' : ''), name: true,
-            // git's colour (or Claude's) when it has one; else a folder's name takes its marker's
-            // colour, and a file's its folder's (a file at the root keeps the plain colour).
-            ...(color ? { c: color } : dotfile ? { dim: true } : isDir ? { c: folderColor(folderAt.get(lower(entry.path)) ?? 0) }
-              : folderAt.has(lower(parentOf(entry.path))) ? { c: folderColor(folderAt.get(lower(parentOf(entry.path)))!) } : {}),
+            ...(color ? { c: color } : quiet ? { dim: true } : {}),
             ...(tone || isSelected ? { b: true } : {}), ...(shimmer ? { sh: TONE_SHIMMER[shimmer] } : {}),
           },
         ]
@@ -562,22 +579,10 @@ export function filesView(
         if (!isDir && stale[lower(entry.path)]) segs.push({ t: `${NNBSP}${STALE_MARK} ${staleLabel(stale[lower(entry.path)]!.by)}`, c: FLAG_COLOR })
         if (tone) segs.push({ t: `${NNBSP}· ${TONE_WORD[tone]}`, c: TONE_COLOR[tone], b: true, sh: TONE_SHIMMER[tone] })
         else if (last && last.path === lower(entry.path)) segs.push({ t: `${NNBSP}◂`, c: TONE_COLOR[last.tone] })
-        // At the right edge, as VS Code's explorer does: Claude's edits, the lines changed, then
-        // one git letter for a file (or a folder untracked as a whole) and a dot for a folder
-        // with changes inside.
-        if (edits) segs.push({ t: `${NNBSP}●${edits}`, c: 'claude', right: true })
-        if (isDir && !isOpen && hasEditsBelow(counts, entry.path)) segs.push({ t: `${NNBSP}●`, c: 'claude', dim: true, right: true })
-        // Lines changed (a folder sums its files'), then a file's git letter or a folder's
-        // counts by kind, as filetree shows them; a clean file shows when it last changed.
-        const sum = isDir ? linesBelow(git, entry.path) : lines
-        // Only what is there, as filetree shows it: no +0 or -0.
-        if (sum?.[0]) segs.push({ t: `${NNBSP}+${sum[0]}`, c: GIT_HEX.add, right: true })
-        if (sum?.[1]) segs.push({ t: `${NNBSP}-${sum[1]}`, c: GIT_HEX.del, right: true })
-        const below = isDir ? dirCounts(git, entry.path) : null
-        const tint = statusColor(code) ? { c: statusColor(code)! } : {}
-        if (below) segs.push(...countSegs(below))
-        else if (code) segs.push({ t: `${NNBSP}${gitLetter(code)}`, ...tint, right: true })
-        else if (!isDir && entry.at) segs.push({ t: `${NNBSP}${stampOf(entry.at)}`, c: GIT_HEX.muted, right: true, opt: true })
+        // At the right edge, in four columns that line up row to row: Claude's edits (a dim dot
+        // for a closed folder with edits inside), lines added, lines removed, then git's word
+        // (a file's letter, a folder's counts by kind). A file with no change shows nothing.
+        segs.push(...slots[at]!)
         if (Client) {
           rowPresses.set(key, press)
           // Double-click a file to show it here, right-click a row to copy its path (shift: the whole path).
@@ -585,8 +590,9 @@ export function filesView(
           rowCopies.set(key, (full, surface) => actions.copy(entry.path, full, surface))
           rowReveals.set(key, () => actions.showInFolder(entry.path, isDir))
           // As wide as the pane, so the row knows its room and fits itself (it never wraps).
-          // Monospace, as filetree's terminal rows are: the dates and badges line up in a column.
-          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, ...(isSelected && !terminal ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />
+          // Monospace, as filetree's terminal rows are: the columns line up. The last columns stay
+          // free for the pane's scrollbar.
+          return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, inset: SCROLL_INSET, ...(isSelected && !terminal ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />
         }
         // Surfaces without a Client: a plain Button, which may not paint the colours.
         return (

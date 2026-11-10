@@ -16,7 +16,11 @@ export const rowReveals = new Map<string, () => void>()
 /** A toolbar icon's click, by the tool's id. */
 export const toolPresses = new Map<string, () => void>()
 
+/** A tab's press in the tree's All | Now switch, by the view it chooses. */
+export const modePresses = new Map<string, () => void>()
+
 export function clearRows(): void {
+  modePresses.clear()
   toolPresses.clear()
   rowPresses.clear()
   rowOpens.clear()

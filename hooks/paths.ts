@@ -161,9 +161,3 @@ export function badgeColors(solid: boolean, color: string, fill: string): { c: s
   const luma = Number.isNaN(n) ? 0 : 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)
   return { c: luma > 150 ? '#1f1e1d' : '#ffffff', bg: color }
 }
-
-/** A file's time as filetree shows it: `2026-10-02 09:24`, local time. */
-export function stampOf(at: number): string {
-  const d = new Date(at)
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}

@@ -23,7 +23,7 @@ import { fullCopy, openCommand, osOf, relativeCopy, revealCommand } from './open
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
 import { filesView, TOUCHED_MAX } from './files-view'
-import { clearRows, rowCopies, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
+import { clearRows, modePresses, rowCopies, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import { NO_SVG } from './octicons'
@@ -1232,9 +1232,11 @@ export const register: Register = on => {
   // A double-click's second click opens a file (a folder has nothing to open, so it is
   // let be rather than closing what the first click opened); a right-click copies the path.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown; tool?: unknown; resize?: unknown; end?: unknown } | null
+    const data = e.data as { press?: unknown; open?: unknown; copy?: unknown; full?: unknown; tool?: unknown; mode?: unknown; resize?: unknown; end?: unknown } | null
     if (e.requestId !== PANE || !data || typeof data !== 'object') return next(e)
     if (typeof data.tool === 'string' && toolPresses.has(data.tool)) { toolPresses.get(data.tool)!(); return {} }
+    // The All | Now tabs: the view a press chose.
+    if (typeof data.mode === 'string' && modePresses.has(data.mode)) { modePresses.get(data.mode)!(); return {} }
     // The card's handle, let go: as many touched files as it asks, kept for the next session.
     if (typeof data.resize === 'number' && e.element === 'card-handle') {
       const rows = Math.max(0, Math.min(TOUCHED_MAX, Math.round(data.resize)))
