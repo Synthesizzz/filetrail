@@ -19,11 +19,11 @@ import { checksum, judgeStale, remember, staleLabel } from './stale'
 import type { ReadRecord } from './stale'
 import { addRun, dismissRuns, testCommand, testScope } from './test-runs'
 import { contextLine, mentionedPaths, resolveMention } from './context'
-import { fullCopy, openCommand, osOf, relativeCopy } from './open'
+import { fullCopy, openCommand, osOf, relativeCopy, revealCommand } from './open'
 import type { HostOs } from './open'
 import { askText, fileStamp, historyMarkdown, projectName, stamp } from './export'
 import { filesView, TOUCHED_MAX } from './files-view'
-import { clearRows, rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
+import { clearRows, rowCopies, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
 import { parseNumstat, parseStatus } from './git'
 import { gitActionsOf, makesRepo, MAX_ACTIONS } from './git-actions'
 import { NO_SVG } from './octicons'
@@ -143,6 +143,22 @@ async function osHere($: EngineInterface): Promise<HostOs> {
 async function openFile($: EngineInterface, path: string) {
   const ran = await $.process.run(openCommand(await osHere($), path), { timeoutMs: 10_000 })
   $.ui.toast(ran.exitCode === 0 ? `filetrail: opened ${relTo(root, path)}` : `filetrail: could not open ${relTo(root, path)}: ${ran.stderr.trim() || `exit ${ran.exitCode}`}`)
+}
+
+/**
+ * Shows a file selected in its folder in the system's file manager, or opens a folder; says so.
+ * A file that is gone shows its folder (explorer opens Documents for a path it cannot find).
+ * explorer ends with 1 when it worked, so on Windows that, with nothing on stderr, is no failure.
+ */
+async function showInFolder($: EngineInterface, path: string, isDir: boolean) {
+  const os = await osHere($)
+  const gone = !isDir && !(await $.fs.exists(path))
+  const ran = await $.process.run(revealCommand(os, gone ? parentOf(path) : path, isDir || gone), { timeoutMs: 10_000 })
+  const rel = relTo(root, path)
+  const worked = ran.exitCode === 0 || (os === 'windows' && ran.exitCode === 1 && !ran.stderr.trim())
+  $.ui.toast(!worked
+    ? `filetrail: could not show ${rel}: ${ran.stderr.trim() || `exit ${ran.exitCode}`}`
+    : isDir ? `filetrail: opened folder ${rel}` : gone ? `filetrail: ${rel} is gone, showed its folder` : `filetrail: showed ${rel} in its folder`)
 }
 
 async function copyPath($: EngineInterface, path: string, full: boolean, surface: string) {
@@ -1228,6 +1244,7 @@ export const register: Register = on => {
     }
     if (data.press === true && rowPresses.has(e.element)) { rowPresses.get(e.element)!(); return {} }
     if (data.open === true) { rowOpens.get(e.element)?.(); return {} }
+    if (data.reveal === true) { rowReveals.get(e.element)?.(); return {} }
     if (data.copy === true && rowCopies.has(e.element)) { rowCopies.get(e.element)!(data.full === true, e.surface); return {} }
     return next(e)
   })
@@ -1301,6 +1318,7 @@ export const register: Register = on => {
                   if (query.trim() && !(await read($, index))) await ensureIndex($)
                 }),
                 open: path => fire($, 'opening the file', () => openFile($, path)),
+                showInFolder: (path, isDir) => fire($, 'showing the file in its folder', () => showInFolder($, path, isDir)),
                 copy: (path, full, surface) => fire($, 'copying the path', () => copyPath($, path, full, surface)),
                 toggleGitLog: () => fire($, 'opening the git bar', () => update($, files, f => ({ ...f, gitOpen: !f.gitOpen }))),
                 toggleTouched: () => fire($, 'listing the touched files', () => update($, files, f => ({ ...f, touchedOpen: !f.touchedOpen }))),

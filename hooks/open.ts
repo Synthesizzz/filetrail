@@ -23,6 +23,22 @@ export function openCommand(os: HostOs, path: string): string[] {
   return ['xdg-open', path]
 }
 
+/**
+ * The command that shows `path` in the system's file manager, as an argument vector run
+ * without a shell: a file is selected in its folder (Windows `explorer /select,`, a Mac's
+ * `open -R`), a folder is opened. Linux has no select, so a file's folder opens. On
+ * Windows the path and `/select,` are one argument: explorer reads no quotes from an argv.
+ */
+export function revealCommand(os: HostOs, path: string, isDir: boolean): string[] {
+  const p = normPath(path)
+  if (os === 'windows') {
+    const win = p.replace(/\//g, '\\')
+    return ['explorer', isDir ? win : `/select,${win}`]
+  }
+  if (os === 'mac') return isDir ? ['open', p] : ['open', '-R', p]
+  return ['xdg-open', isDir ? p : p.slice(0, Math.max(1, p.lastIndexOf('/')))]
+}
+
 /** What Copy path puts on the clipboard: the path from the project root, forward slashes. */
 export function relativeCopy(root: string, path: string): string {
   return relTo(root, path)

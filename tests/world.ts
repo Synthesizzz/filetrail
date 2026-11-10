@@ -34,11 +34,13 @@ export type WorldOptions = {
   images?: Record<string, string>
   /** The engine's agent list as `$.agent.list()` answers it; a test can change the array it gets back as it goes. */
   agents?: { id: string; type: string; description: string; status: string }[]
+  /** What a command other than git ends with, by its argv: an exit code and what it wrote to stderr (the default: 0 and nothing). */
+  exits?: (argv: string[]) => { exitCode: number; stderr?: string } | undefined
 }
 
 const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase()
 
-export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [], agents = [] }: WorldOptions = {}) {
+export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [], agents = [], exits }: WorldOptions = {}) {
   mock.env(on, env)
   // A subagent starts: the engine answers its id, as it did on a real one (`ag1`, `ag2`, ...).
   let spawned = 0
@@ -109,7 +111,10 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     // Openers (cmd /c start, open, xdg-open) succeed; uname says Linux.
     if (argv[0] === 'uname') return out('Linux\n')
-    if (argv[0] !== 'git') return out('')
+    if (argv[0] !== 'git') {
+      const end = exits?.(argv)
+      return end ? { value: { exitCode: end.exitCode, stdout: '', stderr: end.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } } : out('')
+    }
     if (!git) return out('', 128)
     // `rev-parse HEAD` answers the commit a test sets; any other rev-parse is the repo's top.
     if (argv[1] === 'rev-parse') return out(argv[2] === 'HEAD' ? `${git.head ?? 'h0'}\n` : `${git.top}\n`)

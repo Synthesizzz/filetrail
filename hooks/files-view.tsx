@@ -10,7 +10,7 @@ import { relTo } from './history'
 import { staleLabel } from './stale'
 import { badgeColors, NARROW_COLUMNS, NBSP, NNBSP, splitPath, stampOf } from './paths'
 import type { RowProps, Seg } from './row'
-import { rowCopies, rowOpens, rowPresses, toolPresses } from './presses'
+import { rowCopies, rowOpens, rowPresses, rowReveals, toolPresses } from './presses'
 import type { Tool, ToolsProps } from './tools'
 import type { HandleProps } from './handle'
 import { helperStrip } from './agents-view'
@@ -39,6 +39,8 @@ export type FilesActions = {
   openHit: (rel: string) => void
   /** Opens a file with the machine's default app. */
   open: (path: string) => void
+  /** Shows a file selected in its folder in the system's file manager, or opens a folder there. */
+  showInFolder: (path: string, isDir: boolean) => void
   /** Puts a path on the clipboard of the surface pressed: from the root, or whole. */
   copy: (path: string, full: boolean, surface: string) => void
   /** Shows every kept git action in the bar, or only the latest again. */
@@ -381,6 +383,7 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
           rowPresses.set(key, () => (gone ? actions.history(f.path) : actions.reveal(f.path)))
           rowOpens.set(key, () => (gone ? actions.history(f.path) : actions.preview(f.path)))
           rowCopies.set(key, (full, surface) => actions.copy(f.path, full, surface))
+          rowReveals.set(key, () => actions.showInFolder(f.path, false))
           // Monospace, as the tree's rows: the row fits itself by counting cells (seen live: a
           // proportional name was cut short with room to spare).
           // A touched file types itself in as it joins the list (the handle let it in, or Claude touched it).
@@ -501,6 +504,7 @@ export function filesView(
             ? <Button key="file-history" label={`History ${selectedSteps}`} plain dimColor onPress={() => actions.history(files.selected!)} />
             : null}
           <Button key="open-file" label="Open" plain dimColor onPress={() => actions.open(files.selected!)} />
+          <Button key="reveal-file" label="Reveal" plain dimColor onPress={() => actions.showInFolder(files.selected!, false)} />
           <Button key="copy-path" label="Copy path" plain dimColor onPress={press => actions.copy(files.selected!, false, press.surface)} />
           <Button key="copy-full" label="Full path" plain dimColor onPress={press => actions.copy(files.selected!, true, press.surface)} />
           {selectedSteps ? null : <Text dimColor>no edits recorded</Text>}
@@ -579,6 +583,7 @@ export function filesView(
           // Double-click a file to show it here, right-click a row to copy its path (shift: the whole path).
           if (!isDir) rowOpens.set(key, () => actions.preview(entry.path))
           rowCopies.set(key, (full, surface) => actions.copy(entry.path, full, surface))
+          rowReveals.set(key, () => actions.showInFolder(entry.path, isDir))
           // As wide as the pane, so the row knows its room and fits itself (it never wraps).
           // Monospace, as filetree's terminal rows are: the dates and badges line up in a column.
           return <Client key={key} module="./row.tsx" width="100%" props={{ segs, mono: true, ...(isSelected && !terminal ? { bg: SELECTED_BG } : {}) } satisfies RowProps} />

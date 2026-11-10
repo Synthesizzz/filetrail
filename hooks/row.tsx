@@ -27,8 +27,8 @@ export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boole
  * than have it pop in whole: a list can only grow a line at a time.
  */
 export type RowProps = { segs: Seg[]; wrap?: boolean; hoverAt?: number; bg?: string; mono?: boolean; reveal?: boolean }
-/** What a row posts: a click, the second click of a double-click, or a right-click (shift for the whole path). */
-export type RowPost = { press: true } | { open: true } | { copy: true; full: boolean }
+/** What a row posts: a click, the second click of a double-click, a right-click (shift for the whole path) or a click with Ctrl held. */
+export type RowPost = { press: true } | { open: true } | { copy: true; full: boolean } | { reveal: true }
 
 /** Two clicks this close (ms) on one row are a double-click, as filetree times them. */
 export const DOUBLE_MS = 450
@@ -162,6 +162,8 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
     if (e.type !== 'down') return
     if (e.button === 'right') { surface.post({ copy: true, full: e.shift === true } satisfies RowPost); return }
     if ((e.button ?? 'left') !== 'left') return
+    // Ctrl held: show the row in the file manager, as in a file explorer. It selects nothing and is no first click of a double-click.
+    if (e.ctrl === true) { surface.post({ reveal: true } satisfies RowPost); return }
     // A second click soon after the first opens; the first has already pressed (selected).
     const at = Date.now()
     const ref = (surface.state ?? state).ref
