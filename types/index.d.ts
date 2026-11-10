@@ -245,6 +245,8 @@ declare module 'claude-code' {
       stale: Record<string, StaleMark>
       /** This session's helpers (subagents), oldest first; empty until one starts. A reload forgets them. */
       helpers: Helper[]
+      /** The helpers (by id) whose rows in the Agents tab are open to their files. */
+      helpersOpen: string[]
     }
   }
 }

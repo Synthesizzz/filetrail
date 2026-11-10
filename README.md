@@ -143,11 +143,11 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 
 ### The Agents tab
 
-The tab appears, beside Files and History, once Claude has started a helper (a subagent) in the session, and `/trail agents` opens the pane on it at any time.
+The tab sits beside Files and History from the start. Once Claude has started a helper (a subagent) in the session its label counts them, and `/trail agents` opens the pane on it at any time.
 
 - **It opens by itself.** The first helper Claude starts in a turn turns the pane to this tab, and opens the pane if it was closed, without taking the keyboard. Later helpers in the same turn leave the tab where you put it; the next turn does it again.
 
-- A **card for each helper**, those at work first: its type and the task it was given, whether it is working, done or failed, how long it worked, how many tools it called, and the files it read (`◉`) or wrote (`✎`). Press a file to see it in the pane.
+- A **row for each helper**, those at work first: a crab in a pose for what the helper last did (writing or reading a file, thinking before its first one, cheering when it is done, sweating when it failed), the task it was given, the file it is on, how long it has worked and how many tools it called. A bar under the row shows its time next to the longest helper's. Press the task to open the row to its type and every file it read (`◉`) or wrote (`✎`), and press a file to see it in the pane. The row stays open until you press the task again. The crab is drawn on the desktop (for the first eight rows); a terminal shows a glyph.
 - The **strip on the card** (the Files tab's top) names the helpers at work, two at most, with `+N more helper`; press it to open the tab. It goes when none is working.
 - The files are the ones a helper named in its own `Read`, `Edit` and `Write` calls that went through. What a shell command did to files is not counted for a helper. The list is kept for the session (50 helpers, 30 files each) and starts again when the session does; a helper that was already running comes back from Claude Code's own list, without its calls and files.
 - Helpers are read from what Claude Code reports as they start, call tools and finish, so the tab needs no polling. Tokens and cost are not shown here.

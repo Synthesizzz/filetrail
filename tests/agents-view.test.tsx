@@ -12,13 +12,13 @@ const labelOf = async (ui: any, key: string): Promise<string | undefined> => {
 }
 const spawn = async ($: any, description: string, subagentType = 'Explore') => String((await $.agent.spawn({ prompt: description, description, subagentType })).agentId)
 
-test('no tab and no strip until a helper starts; then the tab counts those at work and the card names them', async ($, on) => {
+test('the tab is there from the start, with no strip until a helper starts; then the tab counts those at work and the card names them', async ($, on) => {
   const { clock } = world(on, {})
   await $.session.start(START)
   await clock.settle()
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ plugin: 'filetrail', surface, ...PANE })
-    expect(await ui.find({ key: 'tab-agents' })).toBeUndefined()
+    expect(await labelOf(ui, 'tab-agents')).toBe('Agents')
     expect(await ui.find({ key: 'helper-strip' })).toBeUndefined()
     await ui.unmount()
   }
@@ -66,11 +66,14 @@ test('a card says what the helper did: its calls, how long, and its files, a pre
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await ui.press({ key: 'tab-agents' })
   let lines = await texts(ui)
-  expect(lines.find(t => /^working/.test(t))).toBe('working · 5.0s · 2 calls · 1 file')
+  expect(lines).toContain('◉ a.md · 5.0s · 2 calls')
+  // The files stay under the task until the row is opened.
+  expect(await ui.find({ key: `file-${id}-C:/work/demo/a.md` })).toBeUndefined()
+  await ui.press({ key: `agent-head-${id}` })
   expect(await labelOf(ui, `file-${id}-C:/work/demo/a.md`)).toBe('◉ a.md')
   await $.turn.complete({ ...DONE, agentId: id } as never)
   lines = await texts(ui)
-  expect(lines.find(t => /^done/.test(t))).toBe('done · 5.0s · 2 calls · 1 file')
+  expect(lines).toContain('done · ◉ a.md · 5.0s · 2 calls')
   // Nothing works now: the strip is gone and the tab says how many there were.
   await ui.press({ key: 'tab-files' })
   expect(await ui.find({ key: 'helper-strip' })).toBeUndefined()

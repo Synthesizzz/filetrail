@@ -68,6 +68,8 @@ const tests = atom({ plugin: 'filetrail', key: 'tests' } as const, null as TestR
 const stale = atom({ plugin: 'filetrail', key: 'stale' } as const, {} as Record<string, StaleMark>)
 /** The session's helpers (subagents), for the Agents tab and the card's strip. (`helpers` below counts those at work, for the crab.) */
 const crew = atom({ plugin: 'filetrail', key: 'helpers' } as const, [] as Helper[])
+/** The helpers whose rows are open to their files in the Agents tab (ids); a press on a row's task opens or closes it. */
+const agentsOpen = atom({ plugin: 'filetrail', key: 'helpersOpen' } as const, [] as string[])
 /** Whether the pane was turned to the Agents tab for this turn already: the first helper of a turn does it, the rest leave the tab where the person put it. */
 let agentsShown = false
 /** Kept in the session's state, so a reload starts from the head measured before. */
@@ -921,6 +923,7 @@ export const register: Register = on => {
     await update($, working, () => false)
     // Helpers are read again from the engine: ones that started before a reload are still its own.
     await update($, crew,() => [])
+    await update($, agentsOpen, () => [])
     await syncHelpers($).catch(err => $.ui.log(`filetrail: helpers were not read: ${String(err)}`))
     // The tree's view as left in an earlier session.
     const mode = await $.store.get(MODE_KEY)
@@ -1272,12 +1275,10 @@ export const register: Register = on => {
           <Button key="tab-history" label="History" hotkey="h"
             {...(current === 'history' ? { variant: 'primary' as const } : { dimColor: true })}
             onPress={go('history')} />
-          {/* Shown once a helper has started this session, or while the tab is open. */}
-          {mates.length || current === 'agents'
-            ? <Button key="tab-agents" label={tabLabel(mates)}
-                {...(current === 'agents' ? { variant: 'primary' as const } : { dimColor: true })}
-                onPress={goAgents} />
-            : null}
+          {/* Always there, beside Files and History: the label counts the helpers once there are some. */}
+          <Button key="tab-agents" label={tabLabel(mates)}
+            {...(current === 'agents' ? { variant: 'primary' as const } : { dimColor: true })}
+            onPress={goAgents} />
         </Box>
         <Box key="body" flexDirection="column" marginTop={1}>
           {current === 'agents'
@@ -1286,7 +1287,8 @@ export const register: Register = on => {
                   await update($, tab, () => 'files')
                   await loadPreview($, path, 0)
                 }),
-              })
+                toggle: id => fire($, 'opening a helper', () => update($, agentsOpen, l => (l.includes(id) ? l.filter(x => x !== id) : [...l, id]))),
+              }, await read($, agentsOpen), e.props.bodyColumns)
             : current === 'files'
             ? filesView(els, root, await read($, listing), await read($, files), await read($, git), turnsAll, await read($, flash), await read($, last), {
                 toggle: dir => fire($, 'opening a folder', async () => {
