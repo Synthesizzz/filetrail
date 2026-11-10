@@ -33,7 +33,7 @@ export function callText(call: { tool: string; [k: string]: unknown }): string {
 /** Words of a hook's refusal as Claude Code reports it ("PreToolUse:Bash hook error"); a path that merely says "hooks" is not one. */
 const HOOK_WORDS = /\bhook (?:blocking )?error\b/i
 /** Words of Claude Code's own refusals: a person saying no, the permission rules, a permission not yet granted, auto mode's check. */
-const HARNESS_WORDS = /doesn'?t want to proceed|tool use was rejected|\buser (refused|rejected|denied|declined)|permissions? (rule|setting|mode|prompt|to use)|requested permissions? to|haven'?t granted|auto mode|classifier|requires approval|was blocked/i
+const HARNESS_WORDS = /doesn'?t want to proceed|tool use was rejected|\buser (refused|rejected|denied|declined)|permissions? (rule|setting|mode|prompt|to use)|requested permissions? to|haven'?t granted|auto mode|requires approval/i
 
 /**
  * Whether a call's result says it was stopped, and why: null for one that was answered.

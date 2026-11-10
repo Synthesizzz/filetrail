@@ -52,6 +52,14 @@ test('blockedOf: the texts a real engine gave for a rule refusal, a hook, a perm
   expect(stopped("Exit code 2\nls: cannot access 'nothere-dir': No such file or directory")).toMatchObject({ kind: 'failed', reason: 'Exit code 2' })
   // A failure that only names a hooks folder is not a hook's refusal.
   expect(stopped("Exit code 2\nls: cannot access 'hooks/nothere': No such file or directory")).toMatchObject({ kind: 'failed' })
+  // A plugin hook refusing answers a bare `deny` (seen on a real engine), and a hook from settings reads like any hook.
+  expect(blockedOf({ deny: 'Scratch plugin says no: this command is not allowed here' }))
+    .toEqual({ kind: 'hook', reason: 'Scratch plugin says no: this command is not allowed here' })
+  expect(stopped('PreToolUse:Bash hook error: [node "C:\\tools\\guard.js"]: Blocked by guard hook: git push that forces history'))
+    .toMatchObject({ kind: 'hook' })
+  // Loose words that only some failures happen to contain are not the harness.
+  expect(stopped("ModuleNotFoundError: No module named 'classifier'")).toMatchObject({ kind: 'failed' })
+  expect(stopped('curl: the request was blocked by the proxy')).toMatchObject({ kind: 'failed' })
   // An answered call carries no isError.
   expect(blockedOf({ ref: 1, result: { stdout: 'fine', stderr: '', interrupted: false }, text: 'fine', isReadOnly: true })).toBe(null)
 })
