@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Helper, Hint, Stage, HistoryView, Preview, SearchIndex, StaleBy, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import type { DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Helper, Hint, Stage, HistoryView, Preview, SearchIndex, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
@@ -413,16 +413,6 @@ async function noteRead($: EngineInterface, path: string) {
   if (k in (await read($, stale))) await update($, stale, m => Object.fromEntries(Object.entries(m).filter(([p]) => p !== k)))
 }
 
-const ORDER: StaleBy[] = ['edit', 'commit', 'outside']
-
-/** Marks a file Claude read as edited by Claude, at once (the full check comes when the turn ends). */
-async function markEdited($: EngineInterface, path: string) {
-  const k = lower(path)
-  if (!reads.has(k)) return
-  const at = await $.clock.now()
-  await update($, stale, m => ({ ...m, [k]: { by: [...new Set<StaleBy>(['edit', ...(m[k]?.by ?? [])])].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)), at } }))
-}
-
 /** The files (lower-cased, relative to the project) that differ between a HEAD a file was read at and HEAD now; null when git cannot say. */
 async function changedSince($: EngineInterface, from: string): Promise<Set<string> | null> {
   const ran = await $.process.run(['git', 'diff', '--name-only', '--relative', `${from}..HEAD`], { cwd: root, timeoutMs: 10_000 }).catch(() => null)
@@ -431,8 +421,9 @@ async function changedSince($: EngineInterface, from: string): Promise<Set<strin
 }
 
 /**
- * Looks again at every file Claude read: changed on the disk, held by a commit since, or
- * edited by Claude (from the steps filetrail recorded). The marks are replaced by what it finds.
+ * Looks again at every file Claude read: changed on the disk or held by a commit since. Claude's
+ * own edits (from the steps filetrail recorded) are told apart from a change outside, not marked.
+ * The marks are replaced by what it finds.
  */
 async function refreshStale($: EngineInterface) {
   if (!reads.size) return
@@ -1087,7 +1078,6 @@ export const register: Register = on => {
       const dir = lower(parentOf(steps[0].path))
       if (dir in (await read($, listing))) await listDir($, parentOf(steps[0].path))
       scheduleGit($)
-      await markEdited($, steps[0].path).catch(err => $.ui.log(`filetrail: an edit was not marked: ${String(err)}`))
       await refreshPreview($, steps[0].path).catch(err => $.ui.log(`filetrail: the preview did not update: ${String(err)}`))
       if (target) await touch($, target).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     }

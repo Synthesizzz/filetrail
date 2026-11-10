@@ -160,7 +160,7 @@ export type Helper = {
 }
 
 /** What changed a file Claude had read: its own edit, a commit holding the file, or a change from outside the session. */
-export type StaleBy = 'edit' | 'commit' | 'outside'
+export type StaleBy = 'commit' | 'outside'
 
 /** A file Claude read that has changed since: by what, and when it was found. */
 export type StaleMark = { by: StaleBy[]; at: number }

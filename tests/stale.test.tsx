@@ -13,19 +13,20 @@ test('checksum: the same text the same, any change another', () => {
 })
 
 test('staleLabel names what changed the file, in a fixed order', () => {
-  expect(staleLabel(['edit'])).toBe('edited')
   expect(staleLabel(['commit'])).toBe('committed')
   expect(staleLabel(['outside'])).toBe('changed outside')
-  expect(staleLabel(['edit', 'commit'])).toBe('edited + committed')
+  expect(staleLabel(['commit', 'outside'])).toBe('committed + changed outside')
 })
 
 const rec = (over: Partial<ReadRecord> = {}): ReadRecord => ({ path: 'C:/work/demo/a.ts', at: 10, sum: '5:abc', head: 'h1', ...over })
 
-test('judgeStale: a Claude edit, a commit, or a change nobody here made; or none', () => {
+test('judgeStale: a commit, or a change nobody here made; a Claude edit alone is no mark; or none', () => {
   expect(judgeStale(rec(), { sum: '5:abc' }, false, false)).toBe(null)
-  expect(judgeStale(rec(), { sum: '9:zzz' }, true, false)).toEqual(['edit'])
+  // Claude knows its own edit: no mark for it, and it does not make the change "outside" either.
+  expect(judgeStale(rec(), { sum: '9:zzz' }, true, false)).toBe(null)
   expect(judgeStale(rec(), { sum: '5:abc' }, false, true)).toEqual(['commit'])
-  expect(judgeStale(rec(), { sum: '9:zzz' }, true, true)).toEqual(['edit', 'commit'])
+  // An edit that a commit then took is marked for the commit only.
+  expect(judgeStale(rec(), { sum: '9:zzz' }, true, true)).toEqual(['commit'])
   expect(judgeStale(rec(), { sum: '9:zzz' }, false, false)).toEqual(['outside'])
   // A change that came with a commit (a pull) is the commit's, not "outside".
   expect(judgeStale(rec(), { sum: '9:zzz' }, false, true)).toEqual(['commit'])
@@ -77,7 +78,7 @@ test('a file Claude read and the person then changed shows "changed outside" on 
   await ui.unmount()
 })
 
-test('a file Claude read and then edited itself says "edited"; reading it again clears the marker', async ($, on) => {
+test('a file Claude read and then edited itself has no marker: Claude knows its own edit', async ($, on) => {
   const files = { [A]: 'one\ntwo\n', 'C:\\work\\demo\\b.ts': 'b\n' }
   const { clock, ui } = await setup($, on, files)
   await $.turn.start({ turnId: 't1', text: 'edit' } as never)
@@ -86,12 +87,35 @@ test('a file Claude read and then edited itself says "edited"; reading it again 
   await $.tool.call({ tool: 'Edit', file_path: A, old_string: 'one', new_string: 'uno' } as never)
   files[A] = 'uno\ntwo\n'
   await clock.advance(200)
-  expect(await rowText(ui, rowKey)).toMatch(/a\.ts.*Δ edited/)
+  expect(await rowText(ui, rowKey)).not.toMatch(/Δ/)
   await $.turn.complete({ ...DONE, turnId: 't1' } as never)
   await clock.advance(1000)
-  expect(await rowText(ui, rowKey)).toMatch(/Δ edited/)
+  expect(await rowText(ui, rowKey)).not.toMatch(/Δ/)
+  await ui.advance(500)
+  expect(await rowText(ui, touchedKey)).not.toMatch(/Δ/)
+  await ui.unmount()
+})
+
+test('a file Claude read and edited, then a commit took, says "committed" only; reading it again clears the marker', async ($, on) => {
+  const files = { [A]: 'one\ntwo\n', 'C:\\work\\demo\\b.ts': 'b\n' }
+  const { clock, ui, git } = await setup($, on, files)
+  await $.turn.start({ turnId: 't1', text: 'edit' } as never)
+  await read($)
+  await clock.advance(50)
+  await $.tool.call({ tool: 'Edit', file_path: A, old_string: 'one', new_string: 'uno' } as never)
+  files[A] = 'uno\ntwo\n'
+  await $.turn.complete({ ...DONE, turnId: 't1' } as never)
+  await clock.advance(1000)
+  git.head = 'bbb'
+  git.log = 'a.ts\n'
+  await $.turn.start({ turnId: 't2', text: 'commit' } as never)
+  await $.turn.complete({ ...DONE, turnId: 't2' } as never)
+  await clock.advance(1000)
+  const text = await rowText(ui, rowKey)
+  expect(text).toMatch(/a\.ts.*Δ committed/)
+  expect(text).not.toMatch(/edited/)
   // Claude reads it again: what it knows is current, and the marker goes.
-  await $.turn.start({ turnId: 't2', text: 'again' } as never)
+  await $.turn.start({ turnId: 't3', text: 'again' } as never)
   await read($)
   await clock.advance(200)
   expect(await rowText(ui, rowKey)).not.toMatch(/Δ/)

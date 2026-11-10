@@ -21,9 +21,9 @@ export function checksum(text: string): string {
   return `${text.length}:${h.toString(16)}`
 }
 
-const WORD: Record<StaleBy, string> = { edit: 'edited', commit: 'committed', outside: 'changed outside' }
+const WORD: Record<StaleBy, string> = { commit: 'committed', outside: 'changed outside' }
 
-/** What changed a file, as the row says it: "edited", "committed", "edited + committed", "changed outside". */
+/** What changed a file, as the row says it: "committed", "changed outside". */
 export function staleLabel(by: readonly StaleBy[]): string {
   return by.map(b => WORD[b]).join(' + ')
 }
@@ -39,13 +39,13 @@ export function remember(reads: Map<string, ReadRecord>, key: string, rec: ReadR
  * What changed a file since it was read, or null when nothing did. `now.sum` is its checksum
  * now (null: gone or unreadable, which the deletion record owns); `edited` that filetrail
  * recorded an edit of it after the read; `committed` that a commit since then holds it. A
- * change with none of those is "outside": the person, another tool, another session.
+ * change with none of those is "outside": the person, another tool, another session. Claude's
+ * own edit is no mark (it knows what it wrote), and it does not make the change "outside".
  */
 export function judgeStale(rec: ReadRecord, now: { sum: string | null }, edited: boolean, committed: boolean): StaleBy[] | null {
   if (now.sum === null) return null
   const changed = now.sum !== rec.sum
   const by: StaleBy[] = []
-  if (edited) by.push('edit')
   if (committed) by.push('commit')
   if (changed && !edited && !committed) by.push('outside')
   return by.length ? by : null

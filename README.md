@@ -23,7 +23,7 @@ It is built for the Claude Code desktop app and also works in the terminal.
 - **Shell damage is flagged.** A file a Bash or PowerShell command shrank by more than half, or overwrote, gets a yellow flag in the card and a step in History with its old text.
 - **Nothing refused vanishes.** Every tool call that was refused or failed is kept in its turn, with who stopped it and why.
 - **The last test run stays.** The card keeps the command, the result and the time after the chip is gone, and warns when a one-file run and a full run disagree.
-- **Stale reads are marked.** A file Claude read that has since been edited, committed or changed outside the session carries a `Δ` and says by what.
+- **Stale reads are marked.** A file Claude read that has since been committed or changed outside the session carries a `Δ` and says by what. Claude's own edits are not marked: it knows what it wrote.
 - **Pictures show.** PNG, JPEG and SVG files open in the pane viewer (drawn on the desktop, described in words on the terminal).
 - **Helpers are listed.** When Claude starts a subagent, the card shows it in a short strip, and an Agents tab has a card for each: its task, how long it worked, its calls and the files it read or wrote.
 
