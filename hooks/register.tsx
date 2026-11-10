@@ -8,7 +8,7 @@ import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
 import { agentsView, tabLabel } from './agents-view'
-import { called, finished, joined, reconciled, resumed } from './helpers'
+import { called, finished, joined, reconciled, resumed, running } from './helpers'
 import { commandKind, deleteTargets, isCommit, readTargets, shortCommand } from './bash'
 import { blockedOf, callText } from './blocked'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
@@ -898,7 +898,7 @@ async function countHelperCall($: EngineInterface, e: unknown, result: unknown):
 async function syncHelpers($: EngineInterface): Promise<void> {
   const listed = await $.agent.list()
   const at = await $.clock.now()
-  await update($, crew,l => reconciled(l, listed.map(a => ({ id: a.id, type: a.type, description: a.description, status: a.status })), at))
+  await update($, crew, l => reconciled(l, listed.map(a => ({ id: a.id, type: a.type, description: a.description, status: a.status })), at))
 }
 
 async function refreshPreview($: EngineInterface, path: string): Promise<void> {
@@ -945,7 +945,7 @@ export const register: Register = on => {
     } else {
       // A helper sent more to do works again.
       const id = e.agentId
-      await update($, crew,l => resumed(l, id)).catch(err => $.ui.log(`filetrail: a helper was not marked: ${String(err)}`))
+      await update($, crew, l => resumed(l, id)).catch(err => $.ui.log(`filetrail: a helper was not marked: ${String(err)}`))
     }
     return next(e)
   }).catch(async ($, e, next) => {
@@ -956,11 +956,16 @@ export const register: Register = on => {
   // A helper starts: it joins the list the Agents tab and the card's strip draw.
   on('agent.spawn', async ($, e, next) => {
     const started = await next(e)
-    if (started.deny === undefined && started.agentId) {
-      const id = started.agentId
-      const at = await $.clock.now()
-      const task = e.description || firstLine(e.prompt, 60)
-      await update($, crew,l => joined(l, { id, type: e.subagentType || 'subagent', description: task }, at)).catch(err => $.ui.log(`filetrail: a helper was not listed: ${String(err)}`))
+    // Listing a helper never changes what the engine answered: whatever fails here, the spawn's result goes on.
+    try {
+      if (started.deny === undefined && started.agentId) {
+        const id = started.agentId
+        const at = await $.clock.now()
+        const task = e.description || firstLine(e.prompt ?? '', 60)
+        await update($, crew, l => joined(l, { id, type: e.subagentType || 'subagent', description: task }, at))
+      }
+    } catch (err) {
+      $.ui.log(`filetrail: a helper was not listed: ${String(err)}`)
     }
     return started
   }).catch(async ($, e, next) => {
@@ -1085,7 +1090,7 @@ export const register: Register = on => {
     if (e.agentId !== undefined) {
       const id = e.agentId
       const at = await $.clock.now()
-      await update($, crew,l => finished(l, id, at, e.reason === 'answer')).catch(err => $.ui.log(`filetrail: a helper was not closed: ${String(err)}`))
+      await update($, crew, l => finished(l, id, at, e.reason === 'answer')).catch(err => $.ui.log(`filetrail: a helper was not closed: ${String(err)}`))
       return r
     }
     const turn = pending
@@ -1105,6 +1110,8 @@ export const register: Register = on => {
     if (onFile) await unlight($, onFile).catch(err => $.ui.log(`filetrail: highlight failed: ${String(err)}`))
     // Bash may have changed files too: list the open folders and read git again.
     await relist($)
+    // A helper stopped or lost without its own turn ending would stay "working": the engine's list says.
+    if (running(await read($, crew)).length) await syncHelpers($).catch(err => $.ui.log(`filetrail: helpers were not read: ${String(err)}`))
     // Files Claude read earlier may have changed in the turn: its own edit, a commit, or outside.
     await refreshStale($).catch(err => $.ui.log(`filetrail: read files were not checked: ${String(err)}`))
     // Files may have come or gone: a search already in use gets a fresh list.

@@ -73,3 +73,24 @@ test('a spawn that was refused lists nothing', async ($, on) => {
   expect(r.deny).toBe('No helpers here.')
   expect(helpersOf(states)).toEqual([])
 })
+
+test('a helper the engine says is over, when no turn of its own ended it, is closed as the main turn ends', async ($, on) => {
+  const w = world(on, {})
+  await $.session.start(START)
+  await w.clock.settle()
+  const id = await spawn($, 'Look around')
+  w.agents.push({ id, type: 'Explore', description: 'Look around', status: 'killed' })
+  expect(helpersOf(w.states)[0]!.state).toBe('running')
+  await $.turn.start({ turnId: 't1', text: 'go' } as never)
+  await $.turn.complete({ ...DONE } as never)
+  expect(helpersOf(w.states)[0]).toMatchObject({ state: 'failed' })
+})
+
+test('a spawn with neither a task nor a prompt still goes through and is listed by its type', async ($, on) => {
+  const { states, clock } = world(on, {})
+  await $.session.start(START)
+  await clock.settle()
+  const r = await $.agent.spawn({ subagentType: 'Plan' } as never)
+  expect(r.agentId).toBeDefined()
+  expect(helpersOf(states)).toMatchObject([{ type: 'Plan', description: '', state: 'running' }])
+})

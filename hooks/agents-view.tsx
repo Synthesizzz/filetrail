@@ -57,7 +57,7 @@ export function helperStrip(els: Els, list: readonly Helper[], open: () => void)
   if (!shown.length) return null
   return (
     <Box key="helper-strip" flexDirection="column" minWidth={0}>
-      {shown.map(mate => <Button key={`strip-${mate.id}`} label={`◐ ${nameOf(mate, 30)}${mate.calls ? ` · ${mate.calls}` : ''}`} plain dimColor onPress={open} />)}
+      {shown.map(mate => <Button key={`strip-${mate.id}`} label={`◐ ${nameOf(mate, 24)}${mate.calls ? ` · ${mate.calls}` : ''}`} plain dimColor onPress={open} />)}
       {more > 0 ? <Button key="strip-more" label={`+${more} more helper${more === 1 ? '' : 's'}`} plain dimColor onPress={open} /> : null}
     </Box>
   )
@@ -97,7 +97,7 @@ export function agentsView(els: Els, list: readonly Helper[], now: number, root:
   const at = running(list).length
   return (
     <Box key="agents" flexDirection="column" gap="sm">
-      <Text key="summary" dimColor>{`${list.length} helper${list.length === 1 ? '' : 's'} this session${at ? ` · ${at} working` : ''}`}</Text>
+      <Text key="summary" dimColor wrap="wrap">{`${list.length} helper${list.length === 1 ? '' : 's'} this session${at ? ` · ${at} working` : ''}`}</Text>
       {ordered(list).map(mate => card(els, mate, now, root, actions))}
     </Box>
   )
