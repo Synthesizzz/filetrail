@@ -165,14 +165,15 @@ async function openFile($: EngineInterface, path: string) {
 /**
  * Shows a file selected in its folder in the system's file manager, or opens a folder; says so.
  * A file that is gone shows its folder (explorer opens Documents for a path it cannot find).
- * explorer ends with 1 when it worked, so on Windows that, with nothing on stderr, is no failure.
+ * On Windows Start-Process ends with 0 once explorer is started (explorer itself ended with 1).
  */
 async function showInFolder($: EngineInterface, path: string, isDir: boolean) {
   const os = await osHere($)
   const gone = !isDir && !(await $.fs.exists(path))
-  const ran = await $.process.run(revealCommand(os, gone ? parentOf(path) : path, isDir || gone), { timeoutMs: 10_000 })
+  const reveal = revealCommand(os, gone ? parentOf(path) : path, isDir || gone)
+  const ran = await $.process.run(reveal.argv, { timeoutMs: 10_000, ...(reveal.env ? { env: reveal.env } : {}) })
   const rel = relTo(root, path)
-  const worked = ran.exitCode === 0 || (os === 'windows' && ran.exitCode === 1 && !ran.stderr.trim())
+  const worked = ran.exitCode === 0
   $.ui.toast(!worked
     ? `filetrail: could not show ${rel}: ${ran.stderr.trim() || `exit ${ran.exitCode}`}`
     : isDir ? `filetrail: opened folder ${rel}` : gone ? `filetrail: ${rel} is gone, showed its folder` : `filetrail: showed ${rel} in its folder`)

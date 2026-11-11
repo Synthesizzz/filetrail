@@ -23,20 +23,33 @@ export function openCommand(os: HostOs, path: string): string[] {
   return ['xdg-open', path]
 }
 
+/** The variable a Windows reveal hands the path over in. */
+export const REVEAL_ENV = 'FILETRAIL_REVEAL'
+
+/** A reveal to run: its argument vector, and the variables it needs (the path, on Windows). */
+export type Reveal = { argv: string[]; env?: Record<string, string> }
+
 /**
- * The command that shows `path` in the system's file manager, as an argument vector run
- * without a shell: a file is selected in its folder (Windows `explorer /select,`, a Mac's
- * `open -R`), a folder is opened. Linux has no select, so a file's folder opens. On
- * Windows the path and `/select,` are one argument: explorer reads no quotes from an argv.
+ * The command that shows `path` in the system's file manager, run without a shell: a file
+ * is selected in its folder (Windows `explorer /select,`, a Mac's `open -R`), a folder is
+ * opened. Linux has no select, so a file's folder opens.
+ *
+ * On Windows explorer is started by PowerShell's Start-Process: the engine runs a child
+ * with its window hidden, and explorer run straight from it opened the folder in a hidden
+ * window (seen live: "opened folder" said, no window). Start-Process starts it shown. The
+ * path rides in an env var, not the command line, so &, % and spaces need no quoting.
  */
-export function revealCommand(os: HostOs, path: string, isDir: boolean): string[] {
+export function revealCommand(os: HostOs, path: string, isDir: boolean): Reveal {
   const p = normPath(path)
   if (os === 'windows') {
-    const win = p.replace(/\//g, '\\')
-    return ['explorer', isDir ? win : `/select,${win}`]
+    const arg = isDir ? `'"' + $env:${REVEAL_ENV} + '"'` : `'/select,"' + $env:${REVEAL_ENV} + '"'`
+    return {
+      argv: ['powershell', '-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath explorer.exe -ArgumentList (${arg})`],
+      env: { [REVEAL_ENV]: p.replace(/\//g, '\\') },
+    }
   }
-  if (os === 'mac') return isDir ? ['open', p] : ['open', '-R', p]
-  return ['xdg-open', isDir ? p : p.slice(0, Math.max(1, p.lastIndexOf('/')))]
+  if (os === 'mac') return { argv: isDir ? ['open', p] : ['open', '-R', p] }
+  return { argv: ['xdg-open', isDir ? p : p.slice(0, Math.max(1, p.lastIndexOf('/')))] }
 }
 
 /** What Copy path puts on the clipboard: the path from the project root, forward slashes. */

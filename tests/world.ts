@@ -114,9 +114,12 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     return { value: kids.map(([name, kind]) => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })) }
   })
   const ran: string[][] = []
+  /** Each run's env, in step with `ran` (undefined when it set none). */
+  const envs: (Record<string, string> | undefined)[] = []
   on('process.run', (_$: any, e: any) => {
     const argv: string[] = e.argv
     ran.push(argv)
+    envs.push(e.init?.env)
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     const searched = (argv[0] === 'grep' || (argv[0] === 'git' && argv[1] === 'grep')) ? grep?.(argv) : undefined
     if (searched) return out(searched.stdout, searched.exitCode ?? 0)
@@ -154,7 +157,7 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
     copies.push({ text: e.text, surface: e.surface })
     return { value: { isCopied: true } }
   })
-  return { history, states, store, clock, lists, ran, scrolls, logs, writes, fills, toasts, opens, closes, copies, listed, agents }
+  return { history, states, store, clock, lists, ran, envs, scrolls, logs, writes, fills, toasts, opens, closes, copies, listed, agents }
 }
 
 /** Text with the non-breaking spaces the mod draws (indents, diff lines, narrow ones in a row) read as plain ones. */
