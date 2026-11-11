@@ -110,6 +110,12 @@ test('Claude touched lists the files read and edited, newest first, with a pill 
   const mark = (await rowRuns(ui, rows[1])).find(r => r.text === ' ◉ ')
   expect(mark?.props).toMatchObject({ color: NOW_STYLE.read.color })
   expect(mark?.props.backgroundColor).toBeUndefined()
+  // The pointer on the row says what the glyph means, in the glyph's colour; off it, the glyph alone again.
+  await ui.pointer({ type: 'enter', x: 2, y: 0, in: rows[1] })
+  expect(await rowText(ui, rows[1])).toMatch(/^ TS  App\.ts Src\s+◉ read $/)
+  expect((await rowRuns(ui, rows[1])).find(r => r.text === ' ◉ read ')?.props).toMatchObject({ color: NOW_STYLE.read.color })
+  await ui.pointer({ type: 'leave', x: 2, y: 0, in: rows[1] })
+  expect(await rowText(ui, rows[1])).toMatch(/^ TS  App\.ts Src\s+◉ $/)
 
   // A click goes to the file in the tree, selected.
   await pressRow(ui, rows[1])

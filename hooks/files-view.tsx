@@ -458,7 +458,8 @@ function touchedSection(els: Els, root: string, touched: readonly TouchedFile[],
               // "Deleted by you" keeps its words: who deleted it is not in the glyph.
               : gone && f.by === 'you'
                 ? { t: ` ${did[0]!.toUpperCase()}${did.slice(1)} `, c: style.color, right: true }
-                : { t: ` ${style.glyph} `, c: style.color, right: true },
+                // The pointer on the row spells the glyph out ("◉ read"): the four are easy to forget.
+                : { t: ` ${style.glyph} `, tip: ` ${style.glyph} ${style.did} `, c: style.color, right: true },
         ]
         if (Client) {
           rowPresses.set(key, () => (gone ? actions.history(f.path) : actions.reveal(f.path)))

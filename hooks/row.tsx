@@ -18,8 +18,10 @@ import type { ClientModule } from 'claude-code'
  * `ext` keeps a cut name's extension whole, cutting before it instead of at the end.
  * `pad` runs are blank room that lines a column up with the rows above and below: a row too
  * long for its width gives them up (its values then sit close) before its name is cut.
+ * `tip` is drawn in place of `t` while the pointer is on the row: a glyph says its word
+ * (a desktop Text has no tooltip). The row fits itself to the longer text while it shows.
  */
-export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean; bg?: string; ext?: boolean; pad?: boolean }
+export type Seg = { t: string; c?: string; b?: boolean; u?: boolean; dim?: boolean; mono?: boolean; sh?: string[]; right?: boolean; name?: boolean; opt?: boolean; bg?: string; ext?: boolean; pad?: boolean; tip?: string }
 /**
  * `wrap` lets the runs flow onto further lines (a turn's title) instead of fitting
  * one line (a tree row). `hoverAt` is the run underlined under the pointer: the
@@ -187,7 +189,8 @@ const Row: ClientModule<RowProps, Local> = (props, surface) => {
   const hoverAt = props.hoverAt ?? nameAt(props.segs)
   const inset = props.inset ?? 0
   // A row not laid out yet (0 columns) fits all, as before.
-  const whole = props.wrap ? props.segs : fitRow(props.segs, surface.columns > 0 ? Math.max(1, surface.columns - inset) : 0)
+  const segs = hover ? props.segs.map(s => (s.tip ? { ...s, t: s.tip } : s)) : props.segs
+  const whole = props.wrap ? segs : fitRow(segs, surface.columns > 0 ? Math.max(1, surface.columns - inset) : 0)
   const fitted = state.shown === undefined ? whole : revealRuns(whole, state.shown)
   const runs = fitted.map((s, i) => {
     const style = {
