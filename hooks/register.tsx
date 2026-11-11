@@ -35,9 +35,9 @@ import { NO_SVG } from './octicons'
 import { isMarkdown, pageOf, pageText, PAGE_LINES, refusal } from './preview'
 import {
   addTurn, byteSize, BUDGET_BYTES, changeStep, deleteStep, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
-  isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
+  elsewhereOf, isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
 } from './history'
-import type { EditCall, StoreIndex } from './history'
+import type { EditCall, Elsewhere, StoreIndex } from './history'
 import { historyView, TIMELINE } from './history-view'
 import { MAX_INDEX_FILES, parseLsFiles, SKIP_DIRS } from './search'
 import { joinPath, lower, parentOf, toEntries } from './tree'
@@ -54,6 +54,8 @@ const flash = atom({ plugin: 'filetrail', key: 'flash' } as const, {} as Record<
 const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone; at?: number } | null)
 const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | null)
 const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | null)
+// Other folders with stored history, for an empty History to name.
+const elsewhere = atom({ plugin: 'filetrail', key: 'elsewhere' } as const, [] as Elsewhere[])
 const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as SearchIndex | null)
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
 const stage = atom({ plugin: 'filetrail', key: 'stage' } as const, null as Stage | null)
@@ -775,6 +777,8 @@ async function loadHistory($: EngineInterface) {
   try { root = await $.session.cwd() } catch { root = '' }
   const saved = await $.store.get(projectKey(root))
   await update($, history, () => (Array.isArray(saved) ? (saved as Turn[]) : []))
+  const idx = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
+  await update($, elsewhere, () => elsewhereOf(idx, projectKey(root)))
 }
 
 /** Shows the running turn as it stands: a copy, since its steps change as the tools answer. */
@@ -1602,7 +1606,7 @@ export const register: Register = on => {
                   await update($, tab, () => 'files')
                   await reveal($, path, true)
                 }),
-              }, await $.clock.now(), e.props.bodyColumns, running?.id ?? null, await read($, ignored))}
+              }, await $.clock.now(), e.props.bodyColumns, running?.id ?? null, await read($, ignored), await read($, elsewhere))}
         </Box>
       </Box>
     )

@@ -230,6 +230,8 @@ declare module 'claude-code' {
       hint: Hint | null
       /** The turn running now, while it has edits: shown as "Now" on the timeline until it is saved. */
       live: Turn | null
+      /** Other folders with stored history (case-folded path, last use, bytes), named under an empty History. */
+      elsewhere: { path: string; used: number; bytes: number }[]
       /** The files the search box looks through; null until the first search, built again after each turn. */
       index: SearchIndex | null
       /** The last git actions run through Bash, newest last: running, then done or failed, until newer ones push them out. */

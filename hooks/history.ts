@@ -31,6 +31,20 @@ export function normPath(path: string): string {
   return path.replace(/\\/g, '/')
 }
 
+/** Another folder whose history the store holds: its path (case-folded, as keyed), last use and size. */
+export type Elsewhere = { path: string; used: number; bytes: number }
+
+/**
+ * The folders other than `key` that have history stored, most recently used first. History is
+ * kept per folder, so a new worktree or a moved folder starts empty: this says it is not lost.
+ */
+export function elsewhereOf(index: StoreIndex, key: string): Elsewhere[] {
+  return Object.entries(index)
+    .filter(([k]) => k.startsWith('p:') && k !== key)
+    .map(([k, v]) => ({ path: k.slice(2), used: v.used, bytes: v.bytes }))
+    .sort((a, b) => b.used - a.used)
+}
+
 /** The store key of a project's history: its root, case-folded (Windows paths ignore case). */
 export function projectKey(root: string): string {
   return 'p:' + normPath(root).replace(/\/+$/, '').toLowerCase()

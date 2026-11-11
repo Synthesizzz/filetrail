@@ -153,6 +153,7 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 - **Export** writes the whole history as Markdown to `~/.claude/filetrail/exports/`.
 - Files git ignores (like a local notes file) are left out, and the header says how many turns were hidden.
 - History is kept across sessions for each project: the last 50 turns, up to 200 diff lines per edit, and 3 MiB in total across all projects (the least recently used project is dropped first).
+- History is kept per folder path, so a new worktree, a moved folder or a subfolder starts empty. An empty History then names the other folders that do have some (the three used most recently, with when and how big) and counts the rest, so it does not read as lost.
 - On a wide pane (about 100 columns or more), History splits in two: turns on the left, the picked turn on the right, with a soft fill behind the picked row.
 
 ### The Agents tab

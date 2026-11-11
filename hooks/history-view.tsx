@@ -6,6 +6,8 @@ import type { EngineInterface } from 'claude-code'
 import type { Blocked, DiffLine, HistoryView, Step, Turn } from '../types'
 import { KIND_LABEL } from './blocked'
 import { EDIT_TOOLS } from './history'
+import type { Elsewhere } from './history'
+import { formatBytes } from './image'
 import { SELECTED_BG, TONE_SHIMMER } from './files-view'
 import { clip, clipCells, clockOf, dayLabel, formatAt, gapMinutes, gapText, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS, wrapLines } from './paths'
 
@@ -202,7 +204,39 @@ export function layoutFor(width: number): Layout {
   return { width, narrow: width < NARROW_COLUMNS, wide: width >= WIDE_COLUMNS }
 }
 
-type ListOptions = { selected: string | null; width: number; narrow: boolean }
+type ListOptions = { selected: string | null; width: number; narrow: boolean; elsewhere?: readonly Elsewhere[] }
+
+/** Folders shown by name under an empty History; the rest are counted. */
+export const ELSEWHERE_SHOWN = 3
+
+/** The last folder of a path, for a short label. */
+function lastPart(path: string): string {
+  const parts = path.split('/').filter(Boolean)
+  return parts[parts.length - 1] ?? path
+}
+
+/**
+ * Under an empty History: the other folders whose history is kept, so a new worktree or a
+ * moved folder does not read as history lost. History is kept per folder path.
+ */
+export function elsewhereText(list: readonly Elsewhere[], now: number): string[] {
+  if (!list.length) return []
+  const head = `History is kept per folder. ${list.length} other folder${list.length === 1 ? ' has' : 's have'} some:`
+  const rows = list.slice(0, ELSEWHERE_SHOWN).map(e => `· ${lastPart(e.path)}  ${formatAt(e.used, now)}  ${formatBytes(e.bytes)}  ${e.path}`)
+  const more = list.length > ELSEWHERE_SHOWN ? [`and ${list.length - ELSEWHERE_SHOWN} more`] : []
+  return [head, ...rows, ...more]
+}
+
+function elsewhereLines(els: Els, list: readonly Elsewhere[], now: number) {
+  const lines = elsewhereText(list, now)
+  if (!lines.length) return null
+  const { Box, Text } = els
+  return (
+    <Box key="elsewhere" flexDirection="column" marginTop={1}>
+      {lines.map((l, i) => <Text key={`elsewhere-${i}`} dimColor wrap="truncate-end">{l}</Text>)}
+    </Box>
+  )
+}
 
 /**
  * A turn's title as coloured runs: the marker when selected, the time in blue (or
@@ -310,6 +344,7 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
       <Box key="timeline" flexDirection="column">
         <Text dimColor>No edits recorded yet.</Text>
         <Text dimColor>Edits Claude makes in this project show here, newest first.</Text>
+        {elsewhereLines(els, opts.elsewhere ?? [], now)}
       </Box>
     )
   }
@@ -507,7 +542,7 @@ export const LIST_SHARE = 0.34
  */
 export function historyView(
   els: Els, allTurns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, width: number,
-  liveId: string | null = null, ignored: readonly string[] = [],
+  liveId: string | null = null, ignored: readonly string[] = [], elsewhere: readonly Elsewhere[] = [],
 ) {
   const layout = layoutFor(width)
   const isTimeline = view.turn === null && view.file === null
@@ -516,7 +551,7 @@ export function historyView(
   const stepTurns = (v: HistoryView) => (v.file !== null ? allTurns : turns)
   if (!layout.wide) {
     return isTimeline
-      ? timeline(els, turns, actions, now, liveId, { selected: null, width, narrow: layout.narrow }, hidden)
+      ? timeline(els, turns, actions, now, liveId, { selected: null, width, narrow: layout.narrow, elsewhere }, hidden)
       : stepper(els, stepTurns(view), view, actions, now, layout, liveId)
   }
   const { Box, Text } = els
@@ -526,7 +561,7 @@ export function historyView(
   return (
     <Box key="wide" flexDirection="row" gap={2}>
       <Box key="wide-list" width={`${Math.round(LIST_SHARE * 100)}%`} flexDirection="column">
-        {timeline(els, turns, actions, now, liveId, { selected: shown.file === null ? shown.turn : null, width: listWidth, narrow: listWidth < NARROW_COLUMNS }, hidden)}
+        {timeline(els, turns, actions, now, liveId, { selected: shown.file === null ? shown.turn : null, width: listWidth, narrow: listWidth < NARROW_COLUMNS, elsewhere }, hidden)}
       </Box>
       <Box key="wide-step" flexGrow={1} flexDirection="column">
         {turns.length
