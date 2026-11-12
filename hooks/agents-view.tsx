@@ -1,10 +1,10 @@
 // The Agents tab and the card's strip: the session's helpers (subagents), a group per main turn,
-// the newest on top. A row each, short, set in under the helper that spawned it: a crab in a pose
-// for what the helper last did (a desktop's Svg; a glyph where the surface draws none), its task,
-// the model it runs on, the file it is on, how long it has worked, how many tools it called, and
-// a bar for when it worked on its group's time axis, so helpers that ran together line up. A
-// press on the task opens the row to its files (pressed, they show in the pane). The strip is the
-// card's short form: the helpers at work, and a press opens the tab.
+// the newest on top. A row each, two lines, set in under the helper that spawned it: a crab in a
+// pose for what the helper last did (a desktop's Svg; a glyph where the surface draws none), then
+// a marker, its task and how long it has worked; under them a bar for when it worked on its group's
+// time axis, so helpers that ran together line up, the model it runs on and how many tools it
+// called. A press on the task opens the row to its files (pressed, they show in the pane). The
+// strip is the card's short form: the helpers at work, and a press opens the tab.
 // (No name here is `h`: JSX compiles against a global `h`, which a parameter would hide.)
 
 import type { EngineInterface } from 'claude-code'
@@ -29,6 +29,11 @@ export const CRABS_MAX = 8
 const BAR = '━'
 /** A cell of the axis before a helper started or after it ended. */
 const IDLE = '·'
+/** Before a row's task: closed, and open to its files. */
+const CLOSED = '▸ '
+const OPENED = '▾ '
+/** The most cells a bar has: the model and the calls share its line. */
+const BAR_MAX = 18
 
 export type AgentsActions = {
   /** Shows a file in the pane (the Files tab, the file open). */
@@ -119,19 +124,18 @@ export function grouped(list: readonly Helper[]): HelperGroup[] {
 }
 
 /**
- * The row's second line: how it ended (when it has), the file it is on, how long it worked, how many calls.
+ * What follows the bar on a row's second line: the model it runs on, "failed" when it failed, how
+ * many tools it called ("starting" before the first). How long sits on the first line; the file it
+ * is on shows once the row is open; done is the bar's colour and the crab's pose.
  * Spaces inside a fact are no-break, so a narrow pane wraps the line between facts only.
  */
-export function factsOf(mate: Helper, now: number): string {
-  const last = mate.files[mate.files.length - 1]
-  const calls = mate.calls ? `${mate.calls} call${mate.calls === 1 ? '' : 's'}` : ''
+export function factsOf(mate: Helper): string {
+  const calls = mate.calls ? `${mate.calls} call${mate.calls === 1 ? '' : 's'}` : mate.state === 'running' ? 'starting' : ''
   return [
     modelName(mate.model),
-    mate.state === 'running' ? '' : LOOK[mate.state].word,
-    last ? `${last.tone === 'write' ? '✎' : '◉'} ${splitPath(last.path).name}` : mate.state === 'running' && !mate.calls ? 'starting' : '',
-    formatDuration(elapsed(mate, now)),
+    mate.state === 'failed' ? LOOK.failed.word : '',
     calls,
-  ].filter(Boolean).map(fact => fact.replace(/ /g, ' ')).join(' · ')
+  ].filter(Boolean).map(fact => fact.replace(/ /g, '\u00a0')).join(' · ')
 }
 
 /** "3 calls · 2 files": what a helper has done, '' for nothing yet. */
@@ -181,7 +185,7 @@ export function indentOf(depth: number): string {
 /** What a row needs beyond the helper: its group's axis, the cells its bar has, how deep it is set. */
 type Ctx = { now: number; root: string; axis: { start: number; end: number }; cells: number; depth: number; open: boolean; crab: boolean; actions: AgentsActions }
 
-/** One helper's row: crab, task, facts, its span on the group's axis; its files under them once opened. */
+/** One helper's row: crab; marker, task and how long; its span on the group's axis with the model and calls; its files under them once opened. */
 function row(els: Els, mate: Helper, c: Ctx) {
   const { Box, Text, Button } = els
   const Svg = svgOf(els)
@@ -193,6 +197,7 @@ function row(els: Els, mate: Helper, c: Ctx) {
   const pose = crabPose(mate)
   const art = Svg && c.crab ? crabSvg(pose, `Crab ${look.word}: ${task}`, { wear: true }) : null
   const indent = indentOf(c.depth)
+  const facts = factsOf(mate)
   return (
     <Box key={`agent-${mate.id}`} flexDirection="row" gap={1} alignItems="flex-start" minWidth={0} overflow="hidden">
       {indent ? <Text key={`indent-${mate.id}`} mono dimColor>{indent}</Text> : null}
@@ -200,11 +205,19 @@ function row(els: Els, mate: Helper, c: Ctx) {
         ? <Svg key={`crab-${mate.id}`} source={art.source} alt={art.alt} width={art.width} height={art.height} />
         : <Text key={`mark-${mate.id}`} color={look.color}>{look.glyph}</Text>}
       <Box key="text" flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
-        <Button key={`agent-head-${mate.id}`} plain onPress={() => c.actions.toggle(mate.id)}>
-          <Text weight="semibold">{task}</Text>
-        </Button>
-        <Text key="facts" dimColor wrap="wrap">{factsOf(mate, c.now)}</Text>
-        <Text key="bar" mono wrap="truncate-end"><Text dimColor>{IDLE.repeat(bar.lead)}</Text><Text color={look.color}>{BAR.repeat(bar.on)}</Text><Text dimColor>{IDLE.repeat(bar.tail)}</Text></Text>
+        <Box key="top" flexDirection="row" gap={1} minWidth={0}>
+          <Box key="task" flexGrow={1} flexShrink={1} minWidth={0}>
+            <Button key={`agent-head-${mate.id}`} plain onPress={() => c.actions.toggle(mate.id)}>
+              <Text dimColor>{c.open ? OPENED : CLOSED}</Text>
+              <Text weight="semibold">{task}</Text>
+            </Button>
+          </Box>
+          <Text key="took" dimColor>{formatDuration(elapsed(mate, c.now))}</Text>
+        </Box>
+        <Box key="under" flexDirection="row" gap={1} minWidth={0}>
+          <Text key="bar" mono><Text dimColor>{IDLE.repeat(bar.lead)}</Text><Text color={look.color}>{BAR.repeat(bar.on)}</Text><Text dimColor>{IDLE.repeat(bar.tail)}</Text></Text>
+          {facts ? <Text key="facts" dimColor wrap="wrap">{facts}</Text> : null}
+        </Box>
         {c.open ? (
           <Box key="files" flexDirection="column" marginTop={1}>
             <Text key="kind" dimColor>{`${mate.type}${mate.files.length ? ` · ${mate.files.length} file${mate.files.length === 1 ? '' : 's'}` : ' · no files yet'}`}</Text>
@@ -231,11 +244,12 @@ export function axisOf(group: HelperGroup, now: number): { start: number; end: n
   return { start, end }
 }
 
-/** A group's head: "Turn 10:05 · 3 helpers · 2m 40s", or "Earlier · …" for those with no turn. */
+/** A group's head: "Turn 10:05 · 3 helpers · 1 working · 2m 40s" ("N working" while any does), or "Earlier · …" for those with no turn. */
 export function groupHead(group: HelperGroup, now: number): string {
   const axis = axisOf(group, now)
   const n = group.rows.length
-  return `${group.turn ? `Turn ${clockOf(axis.start)}` : 'Earlier'} · ${n} helper${n === 1 ? '' : 's'} · ${formatDuration(axis.end - axis.start)}`
+  const at = group.rows.filter(r => r.mate.state === 'running').length
+  return `${group.turn ? `Turn ${clockOf(axis.start)}` : 'Earlier'} · ${n} helper${n === 1 ? '' : 's'}${at ? ` · ${at} working` : ''} · ${formatDuration(axis.end - axis.start)}`
 }
 
 /** The Agents tab: a group per main turn, the newest on top, a row per helper on the group's time axis; a line saying so when there are none. `opened` are the helpers whose files show. */
@@ -248,13 +262,12 @@ export function agentsView(els: Els, list: readonly Helper[], now: number, root:
       </Box>
     )
   }
-  const at = running(list).length
-  // The crab takes about four cells, with the gap: the bar fits what is left, less a row's indent.
-  const cells = (depth: number) => Math.min(40, Math.max(6, columns - 6 - indentOf(depth).length - (depth ? 1 : 0)))
+  // The crab takes about four cells, with the gap; the bar takes under half of what is left, less a
+  // row's indent, so the model and the calls fit beside it.
+  const cells = (depth: number) => Math.min(BAR_MAX, Math.max(6, Math.floor((columns - 6 - indentOf(depth).length - (depth ? 1 : 0)) * 0.45)))
   let n = 0
   return (
     <Box key="agents" flexDirection="column" gap="sm">
-      <Text key="summary" dimColor wrap="wrap">{`${list.length} helper${list.length === 1 ? '' : 's'} this session${at ? ` · ${at} working` : ''}`}</Text>
       {grouped(list).map(group => {
         const axis = axisOf(group, now)
         return (

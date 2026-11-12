@@ -49,7 +49,9 @@ test('the strip names the two newest at work and counts the rest; a press on it 
   expect(await labelOf(ui, 'strip-more')).toBe('+1 more helper')
   await ui.press({ key: 'strip-more' })
   const lines = await texts(ui)
-  expect(lines).toContain('3 helpers this session · 3 working')
+  // No line above the groups: the group's head says how many there are and how many work.
+  expect(lines.some(t => t.includes('this session'))).toBe(false)
+  expect(lines.some(t => /^Earlier · 3 helpers · 3 working · /.test(t))).toBe(true)
   for (const id of [a, b, c]) expect(await ui.find({ key: `agent-${id}` })).toBeDefined()
   expect(await labelOf(ui, 'tab-agents')).toBe('Agents 3')
   await ui.unmount()
@@ -66,14 +68,20 @@ test('a card says what the helper did: its calls, how long, and its files, a pre
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })
   await ui.press({ key: 'tab-agents' })
   let lines = await texts(ui)
-  expect(lines).toContain('Sonnet 5.5 · ◉ a.md · 5.0s · 2 calls')
-  // The files stay under the task until the row is opened.
+  // Two lines: ▸, the task and how long on the first; the bar, the model and the calls on the second.
+  expect(await labelOf(ui, `agent-head-${id}`)).toBe('▸ Read the notes')
+  expect(lines).toContain('5.0s')
+  expect(lines).toContain('Sonnet 5.5 · 2 calls')
+  // The file it is on is not on the row; the files stay under the task until the row is opened.
+  expect(lines.some(t => t.includes('◉ a.md'))).toBe(false)
   expect(await ui.find({ key: `file-${id}-C:/work/demo/a.md` })).toBeUndefined()
   await ui.press({ key: `agent-head-${id}` })
+  expect(await labelOf(ui, `agent-head-${id}`)).toBe('▾ Read the notes')
   expect(await labelOf(ui, `file-${id}-C:/work/demo/a.md`)).toBe('◉ a.md')
   await $.turn.complete({ ...DONE, agentId: id } as never)
   lines = await texts(ui)
-  expect(lines).toContain('Sonnet 5.5 · done · ◉ a.md · 5.0s · 2 calls')
+  expect(lines).toContain('Sonnet 5.5 · 2 calls')
+  expect(lines).toContain('5.0s')
   // Nothing works now: the strip is gone and the tab says how many there were.
   await ui.press({ key: 'tab-files' })
   expect(await ui.find({ key: 'helper-strip' })).toBeUndefined()
@@ -143,12 +151,14 @@ test('a group per main turn, the newest on top; helpers that ran together line u
     const lines = await texts(ui)
     const heads = lines.filter(t => t.startsWith('Turn '))
     expect(heads).toHaveLength(2)
-    expect(heads[0]).toMatch(/^Turn \d\d:\d\d · 2 helpers · 30\.0s$/)
+    // b still works: the newer group's head says so.
+    expect(heads[0]).toMatch(/^Turn \d\d:\d\d · 2 helpers · 1 working · 30\.0s$/)
     expect(heads[1]).toMatch(/^Turn \d\d:\d\d · 1 helper · 4\.0s$/)
     // The newer group's rows come first, those of the older group after.
     const order = (await ui.findAll({ type: 'Box' })).map((x: any) => x.key).filter((k: any) => typeof k === 'string' && k.startsWith('agent-'))
     expect(order.slice(0, 3)).toEqual([`agent-${a}`, `agent-${b}`, `agent-${old}`])
-    expect(lines).toContain('Haiku 5.5 · done · 20.0s')
+    expect(lines).toContain('Haiku 5.5')
+    expect(lines).toContain('20.0s')
     // a worked the first two thirds of t2's axis, b the last two thirds: their spans overlap in the middle.
     const barA = await barOf(ui, a)
     const barB = await barOf(ui, b)

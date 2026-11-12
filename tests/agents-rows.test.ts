@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { crabPose, factsOf, ganttCells, grouped, modelName } from '../hooks/agents-view'
+import { crabPose, factsOf, ganttCells, groupHead, grouped, modelName } from '../hooks/agents-view'
 import type { Helper } from '../types'
 
 const mate = (over: Partial<Helper> = {}): Helper => ({ id: 'a', type: 'developer', description: 'Do it', state: 'running', startedAt: 0, endedAt: null, calls: 0, files: [], ...over })
@@ -85,20 +85,29 @@ test('grouped: helpers with no turn (read back after a reload) are one group, al
   expect(grouped([])).toEqual([])
 })
 
-test('factsOf: how it ended, the file it is on, how long, how many calls; "starting" before the first call', () => {
-  expect(flat(factsOf(mate(), 4100))).toBe('starting · 4.1s')
-  expect(flat(factsOf(mate({ calls: 1 }), 2000))).toBe('2.0s · 1 call')
-  expect(flat(factsOf(mate({ calls: 6, files: [{ path: 'C:/p/x/a.md', tone: 'write' }] }), 78_000))).toBe('✎ a.md · 1m 18s · 6 calls')
-  expect(flat(factsOf(mate({ state: 'done', endedAt: 5000, calls: 2, files: [{ path: 'C:/p/b.md', tone: 'read' }] }), 99_000))).toBe('done · ◉ b.md · 5.0s · 2 calls')
-  expect(flat(factsOf(mate({ state: 'failed', endedAt: 1000, calls: 1 }), 99_000))).toBe('failed · 1.0s · 1 call')
+test('factsOf: the calls, "starting" before the first; "failed" when it failed; no file, no time, no "done" (the bar and the crab say those)', () => {
+  expect(flat(factsOf(mate()))).toBe('starting')
+  expect(flat(factsOf(mate({ calls: 1 })))).toBe('1 call')
+  expect(flat(factsOf(mate({ calls: 6, files: [{ path: 'C:/p/x/a.md', tone: 'write' }] })))).toBe('6 calls')
+  expect(flat(factsOf(mate({ state: 'done', endedAt: 5000, calls: 2, files: [{ path: 'C:/p/b.md', tone: 'read' }] })))).toBe('2 calls')
+  expect(flat(factsOf(mate({ state: 'done', endedAt: 5000 })))).toBe('')
+  expect(flat(factsOf(mate({ state: 'failed', endedAt: 1000, calls: 1 })))).toBe('failed · 1 call')
 })
 
-test('factsOf: a narrow pane breaks the line only between facts, never inside "2 calls" or "◉ b.md"', () => {
-  const line = factsOf(mate({ model: 'claude-haiku-5-5', state: 'done', endedAt: 78_000, calls: 2, files: [{ path: 'C:/p/b c.md', tone: 'read' }] }), 99_000)
-  expect(line.split(' · ')).toEqual(['Haiku\u00a05.5', 'done', '◉\u00a0b\u00a0c.md', '1m\u00a018s', '2\u00a0calls'])
+test('factsOf: a narrow pane breaks the line only between facts, never inside "2 calls" or "Haiku 5.5"', () => {
+  expect(factsOf(mate({ model: 'claude-haiku-5-5', state: 'failed', endedAt: 78_000, calls: 2 })).split(' · ')).toEqual(['Haiku\u00a05.5', 'failed', '2\u00a0calls'])
 })
 
 test('factsOf: the model it runs on comes first, when known', () => {
-  expect(flat(factsOf(mate({ model: 'claude-haiku-5-5', calls: 1 }), 2000))).toBe('Haiku 5.5 · 2.0s · 1 call')
-  expect(flat(factsOf(mate({ model: 'claude-opus-5-5', state: 'done', endedAt: 5000, calls: 2 }), 9000))).toBe('Opus 5.5 · done · 5.0s · 2 calls')
+  expect(flat(factsOf(mate({ model: 'claude-haiku-5-5', calls: 1 })))).toBe('Haiku 5.5 · 1 call')
+  expect(flat(factsOf(mate({ model: 'claude-opus-5-5', state: 'done', endedAt: 5000, calls: 2 })))).toBe('Opus 5.5 · 2 calls')
+})
+
+test('groupHead: when the group began, how many, how many still work, how long', () => {
+  const g = (rows: Helper[]) => ({ turn: 't', rows: rows.map(m => ({ mate: m, depth: 0 })) })
+  const done = mate({ id: 'd', state: 'done', startedAt: 0, endedAt: 4000 })
+  const busy = mate({ id: 'b', startedAt: 1000 })
+  expect(groupHead(g([done]), 9000)).toMatch(/^Turn \d\d:\d\d · 1 helper · 4\.0s$/)
+  expect(groupHead(g([done, busy]), 9000)).toMatch(/^Turn \d\d:\d\d · 2 helpers · 1 working · 9\.0s$/)
+  expect(groupHead({ rows: [{ mate: busy, depth: 0 }] }, 9000)).toBe('Earlier · 1 helper · 1 working · 8.0s')
 })
