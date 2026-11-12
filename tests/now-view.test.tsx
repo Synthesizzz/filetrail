@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { DONE, PANE, START, hasRow, hasText, pressRow, world } from './world'
 

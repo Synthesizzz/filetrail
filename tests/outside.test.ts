@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { addOutside, isOutside, OUTSIDE_MAX } from '../hooks/outside'
 

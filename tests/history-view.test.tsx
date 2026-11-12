@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { Step, Turn } from '../types'
 import { stepsFor } from '../hooks/history'
@@ -104,7 +104,7 @@ test('summaryText names up to two files, counts more, and stepsOf', () => {
 })
 
 // Long: every step of a turn and a file across turns, near the default 5 s on a loaded machine.
-test('History: timeline, a turn step by step, and a file across turns', { timeoutMs: 15_000 }, async ($, on) => {
+test('History: timeline, a turn step by step, and a file across turns', async ($, on) => {
   world(on, { stored: { [KEY]: [T1, T2] }, now: NOW })
   await $.session.start(START)
   const ui = await $.ui.mount({ plugin: 'filetrail', surface: 'desktop', ...PANE })

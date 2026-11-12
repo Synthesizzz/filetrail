@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { deleteTargets } from '../hooks/bash'
 import { deleteStep } from '../hooks/history'

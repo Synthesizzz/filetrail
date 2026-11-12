@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { findFiles, matchRank, parseLsFiles } from '../hooks/search'
 import { PANE, START, hasText, plain, world } from './world'

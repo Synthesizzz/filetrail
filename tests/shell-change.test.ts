@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { changeStep } from '../hooks/history'
 import { formatSize, judge, namedFiles, snapshot, MAX_WATCHED } from '../hooks/shell-change'

@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { blockedOf, callText } from '../hooks/blocked'
 import { summaryText, withoutIgnored } from '../hooks/history-view'

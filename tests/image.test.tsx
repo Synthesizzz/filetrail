@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { describeImage, dimensionsOf, formatBytes, imageKind, imageSvg, MAX_DRAW_BYTES } from '../hooks/image'
 import { PANE, START, hasText, plain, world } from './world'

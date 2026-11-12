@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { isCommit, readTargets, splitCommands, tokenize, toPath } from '../hooks/bash'
 import { PANE, START, hasText, rowText, world, pressRow } from './world'

@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { Turn } from '../types'
 import { FOLDER_COLOR, GIT_HEX, SELECTED_BG, typeColor } from '../hooks/files-view'
@@ -26,7 +26,7 @@ const rowKey = (path: string) => `row-${path.toLowerCase()}`
 const ROOT_ROWS = ['src', 'tmp', 'README.md']
 
 // Long: many steps through the tree and its Client rows, near the default 5 s on a loaded machine.
-test('Files: the root listing, git status, line counts and edit badges', { timeoutMs: 15_000 }, async ($, on) => {
+test('Files: the root listing, git status, line counts and edit badges', async ($, on) => {
   const { clock, ran } = world(on, { dirs: DIRS, git: GIT, stored: { [KEY]: EDITED } })
   await $.session.start(START)
   await clock.advance(1000)

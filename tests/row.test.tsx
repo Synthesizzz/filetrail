@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { fitRow } from '../hooks/row'
 import type { Seg } from '../hooks/row'

@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { CRABS_MAX } from '../hooks/agents-view'
 import { crabSvg } from '../hooks/crab'

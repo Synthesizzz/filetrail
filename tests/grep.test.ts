@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { grepArgv, groupMatches, MAX_MATCHES, MIN_QUERY, parseGrep, summaryLine } from '../hooks/grep'
 

@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { FLASH_MS } from '../hooks/activity'
 import { crabSvg, CRAB_PX, CRAB_ROWS, GONE, MERGE, PUSH, TERM_FRAMES } from '../hooks/crab'
@@ -19,7 +19,7 @@ test('spelled finds the tree\'s spelling of a lower-cased path', () => {
   expect(spelled(listing, 'c:/elsewhere/x.ts')).toBe('c:/elsewhere/x.ts')
 })
 
-test('the card says idle before anything is touched, what Claude is doing while lit, then idle with the last file', { timeoutMs: 10_000 }, async ($, on) => {
+test('the card says idle before anything is touched, what Claude is doing while lit, then idle with the last file', async ($, on) => {
   const { clock } = world(on, { dirs: DIRS })
   await $.session.start(START)
   await clock.settle()
@@ -313,7 +313,7 @@ test('the terminal crab has a frame set for every pose, each 4 rows of 8 cells, 
   }
 })
 
-test('the terminal crab steps through its frames on its own clock, a new pose starting again, a still pose never ticking', { timeoutMs: 15_000 }, async ($, on) => {
+test('the terminal crab steps through its frames on its own clock, a new pose starting again, a still pose never ticking', async ($, on) => {
   const dirs: Record<string, [string, 'file' | 'dir'][]> = { 'C:\\work\\demo': [['app.ts', 'file']], 'C:/work/demo': [['app.ts', 'file']] }
   const { clock } = world(on, { dirs, files: { 'C:\\work\\demo\\app.ts': 'a\n' } })
   await $.session.start(START)

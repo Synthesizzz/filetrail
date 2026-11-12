@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { checksum, judgeStale, MAX_READS, remember, staleLabel } from '../hooks/stale'
 import type { ReadRecord } from '../hooks/stale'

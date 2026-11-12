@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { dragRows, previewText } from '../hooks/handle'
 import { REVEAL_MS, REVEAL_STEPS, revealRuns } from '../hooks/row'

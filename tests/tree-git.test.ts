@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { GitInfo, Turn } from '../types'
 import { codeOf, dirCounts, dirStatus, fileStatus, lineCounts, parseBranch, parseNumstat, parseStatus } from '../hooks/git'

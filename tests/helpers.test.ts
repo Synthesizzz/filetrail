@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { MAX_HELPERS, MAX_HELPER_FILES, called, elapsed, finished, joined, nameOf, reconciled, running, strip } from '../hooks/helpers'
 import type { Helper } from '../types'

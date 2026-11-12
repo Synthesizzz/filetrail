@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { contextLine, mentionedPaths, resolveMention } from '../hooks/context'
 import { PANE, START, hasText, world, pressRow } from './world'
