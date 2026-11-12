@@ -173,6 +173,12 @@ export type Helper = {
   endedAt: number | null
   calls: number
   files: HelperFile[]
+  /** The main turn it was spawned in (its id); absent when it came back from the engine's list or no turn ran. */
+  turn?: string
+  /** The helper whose loop spawned it; absent when the main loop did. */
+  parentId?: string
+  /** The model it runs on, as the spawn answered it; absent for one read back from the engine's list. */
+  model?: string
 }
 
 /** What changed a file Claude had read: its own edit, a commit holding the file, or a change from outside the session. */

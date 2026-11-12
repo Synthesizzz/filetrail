@@ -13,6 +13,20 @@ test('joined: a helper starts running; a known one takes the type and task it wa
   expect(again[0]).toMatchObject({ type: 'Plan', description: 'Plan it', calls: 1, startedAt: 100 })
 })
 
+test('joined: keeps the turn, the parent and the model it was spawned with; a known one gets those it lacks and keeps those it has', () => {
+  const one = joined([], { id: 'a', type: 'Explore', description: 'x', turn: 't1', parentId: 'p', model: 'claude-haiku-5-5' }, 100)
+  expect(one[0]).toMatchObject({ turn: 't1', parentId: 'p', model: 'claude-haiku-5-5' })
+  // A call that came before the spawn's answer made a bare helper: the spawn fills it in.
+  const early = joined(called([], 'b', 90), { id: 'b', type: 'Plan', description: 'y', turn: 't2', model: 'claude-opus-5-5' }, 100)
+  expect(early[0]).toMatchObject({ type: 'Plan', turn: 't2', model: 'claude-opus-5-5', calls: 1, startedAt: 90 })
+  expect(early[0]!.parentId).toBeUndefined()
+  // A second spawn answer for the same id does not take back what it had.
+  const again = joined(one, { id: 'a', type: 'Explore', description: 'x', turn: 't9', model: 'claude-sonnet-5-5' }, 200)
+  expect(again[0]).toMatchObject({ turn: 't1', parentId: 'p', model: 'claude-haiku-5-5' })
+  // No value given leaves the key out, so a plain helper is as before.
+  expect(Object.keys(joined([], { id: 'c', type: 'Explore', description: '' }, 1)[0]!)).not.toContain('turn')
+})
+
 test('called: counts a tool and keeps the file it named; a write outranks a read; a helper not seen start joins plain', () => {
   let list = joined([], { id: 'a', type: 'Explore', description: 'x' }, 100)
   list = called(list, 'a', 110, { path: 'C:/p/a.md', tone: 'read' })
@@ -56,6 +70,14 @@ test('reconciled: joins a helper never seen, closes one the engine says is over,
   // A helper this module closed is not reopened by a stale list.
   const closed = finished(list, 'a', 150, true)
   expect(reconciled(closed, [{ id: 'a', type: 'Explore', description: 'x', status: 'running' }], 500)[0]).toMatchObject({ state: 'done', endedAt: 150 })
+})
+
+test('reconciled: a helper never seen takes the parent the engine names; a known one without a parent gets it', () => {
+  const out = reconciled([], [{ id: 'kid', type: 'Explore', description: 'x', status: 'running', parentId: 'mom' }], 10)
+  expect(out[0]).toMatchObject({ id: 'kid', parentId: 'mom' })
+  expect(out[0]!.turn).toBeUndefined()
+  const known = reconciled(joined([], { id: 'k', type: 'Explore', description: '' }, 1), [{ id: 'k', type: 'Explore', description: '', status: 'running', parentId: 'm' }], 5)
+  expect(known[0]!.parentId).toBe('m')
 })
 
 test('the list is capped: finished helpers go first, then the oldest', () => {

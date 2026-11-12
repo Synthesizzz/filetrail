@@ -65,6 +65,33 @@ test('a reload reads the engine\'s own list: helpers started before it join, run
   expect(helpersOf(states).map(h => [h.id, h.type, h.state])).toEqual([['old1', 'Plan', 'running'], ['old2', 'Explore', 'done']])
 })
 
+test('a helper keeps the main turn it was spawned in and the model the spawn answered; one spawned with no turn running has none', async ($, on) => {
+  const { states, clock } = world(on, {})
+  await $.session.start(START)
+  await clock.settle()
+  const loose = await spawn($, 'Before any turn')
+  await $.turn.start({ turnId: 't7', text: 'go' } as never)
+  const r = await $.agent.spawn({ prompt: 'Look around', description: 'Look around', subagentType: 'Explore', model: 'claude-haiku-5-5' })
+  const id = String(r.agentId)
+  const byId = (k: string) => helpersOf(states).find(h => h.id === k)!
+  expect(byId(id)).toMatchObject({ turn: 't7', model: 'claude-haiku-5-5' })
+  expect(byId(loose).turn).toBeUndefined()
+  expect(byId(loose).model).toBe('claude-sonnet-5-5')
+})
+
+test('a helper read back from the engine\'s list keeps the parent it names', async ($, on) => {
+  const { states, clock } = world(on, {
+    agents: [
+      { id: 'mom', type: 'general-purpose', description: 'Split the work', status: 'running' },
+      { id: 'kid', type: 'Explore', description: 'Read a part', status: 'running', parentId: 'mom' },
+    ],
+  })
+  await $.session.start(START)
+  await clock.settle()
+  expect(helpersOf(states).find(h => h.id === 'kid')).toMatchObject({ parentId: 'mom' })
+  expect(helpersOf(states).find(h => h.id === 'mom')!.parentId).toBeUndefined()
+})
+
 test('a spawn that was refused lists nothing', async ($, on) => {
   const { states, clock } = world(on, {})
   await $.session.start(START)

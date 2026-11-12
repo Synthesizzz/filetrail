@@ -1275,7 +1275,7 @@ async function countHelperCall($: EngineInterface, e: unknown, result: unknown):
 async function syncHelpers($: EngineInterface): Promise<void> {
   const listed = await $.agent.list()
   const at = await $.clock.now()
-  await update($, crew, l => reconciled(l, listed.map(a => ({ id: a.id, type: a.type, description: a.description, status: a.status })), at))
+  await update($, crew, l => reconciled(l, listed.map(a => ({ id: a.id, type: a.type, description: a.description, status: a.status, parentId: a.parentId })), at))
 }
 
 async function refreshPreview($: EngineInterface, path: string): Promise<void> {
@@ -1342,7 +1342,8 @@ export const register: Register = on => {
         const id = started.agentId
         const at = await $.clock.now()
         const task = e.description || firstLine(e.prompt ?? '', 60)
-        await update($, crew, l => joined(l, { id, type: e.subagentType || 'subagent', description: task }, at))
+        const from = { turn: pending?.id, parentId: e.parentAgentId, model: started.model }
+        await update($, crew, l => joined(l, { id, type: e.subagentType || 'subagent', description: task, ...from }, at))
         // The first helper of a turn turns the pane to the Agents tab (and opens the pane if it was
         // closed), without taking the keyboard; later ones leave the tab where the person put it.
         if (!agentsShown) {

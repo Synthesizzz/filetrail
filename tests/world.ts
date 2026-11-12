@@ -35,7 +35,7 @@ export type WorldOptions = {
   /** Picture files by path, as the base64 `fs.read(path, { as: 'bytes' })` answers. */
   images?: Record<string, string>
   /** The engine's agent list as `$.agent.list()` answers it; a test can change the array it gets back as it goes. */
-  agents?: { id: string; type: string; description: string; status: string }[]
+  agents?: { id: string; type: string; description: string; status: string; parentId?: string }[]
   /** What a command other than git ends with, by its argv: an exit code and what it wrote to stderr (the default: 0 and nothing). */
   exits?: (argv: string[]) => { exitCode: number; stderr?: string } | undefined
   /** What a content search (`git grep` or `grep`) answers, by its argv; undefined lets the command fall through as it would without this. */
@@ -46,9 +46,10 @@ const key = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCa
 
 export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_000, dirs = {}, git, env = {}, onBash, unreadable = [], images = {}, refuse = [], unreadableKeys = [], agents = [], exits, grep }: WorldOptions = {}) {
   mock.env(on, env)
-  // A subagent starts: the engine answers its id, as it did on a real one (`ag1`, `ag2`, ...).
+  // A subagent starts: the engine answers its id, as it did on a real one (`ag1`, `ag2`, ...),
+  // and the model it runs on (the one the spawn asked for, else the session's).
   let spawned = 0
-  on('agent.spawn', (_$: any, e: any) => (String(e.description).includes('--refuse') ? { deny: 'No helpers here.' } : { model: 'claude-sonnet-5-5', agentId: `ag${++spawned}` }))
+  on('agent.spawn', (_$: any, e: any) => (String(e.description).includes('--refuse') ? { deny: 'No helpers here.' } : { model: e.model ?? 'claude-sonnet-5-5', agentId: `ag${++spawned}` }))
   on('agent.list', () => ({ value: agents }))
   // The engine makes a written path absolute for this machine before the hook sees it
   // ('/home/x' arrives as 'C:\home\x' on Windows): kept here with forward slashes.
