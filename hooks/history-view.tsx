@@ -3,9 +3,11 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { Blocked, DiffLine, HistoryView, Step, Turn } from '../types'
+import type { Blocked, Brought, DiffLine, HistoryView, Step, Turn } from '../types'
 import { KIND_LABEL } from './blocked'
 import { EDIT_TOOLS } from './history'
+import type { Elsewhere } from './history'
+import { formatBytes } from './image'
 import { SELECTED_BG, TONE_SHIMMER } from './files-view'
 import { clip, clipCells, clockOf, dayLabel, formatAt, gapMinutes, gapText, keepIndent, NARROW_COLUMNS, NBSP, splitPath, WIDE_COLUMNS, wrapLines } from './paths'
 
@@ -183,16 +185,22 @@ function diffRows(els: Els, step: Step, max = Infinity) {
 
 export type HistoryActions = {
   set: (v: HistoryView) => void
-  /** Shows a path in the Files tab, selected. */
-  reveal: (path: string) => void
-  /** Shows the file in the pane, at the page holding a line. */
-  view: (path: string, line: number | null) => void
+  /** Shows a path in the Files tab, selected; `rel` given for a brought step, whose file may be in this folder at that path. */
+  reveal: (path: string, rel?: string) => void
+  /** Shows the file in the pane, at the page holding a line; `rel` as for reveal. */
+  view: (path: string, line: number | null, rel?: string) => void
   /** Quotes a step into the prompt box for the person to ask about. */
   ask: (step: Step, turn: Turn) => void
   /** Writes the project's whole history to a Markdown file. */
   exportAll: () => void
   /** Closes the pane. */
   close: () => void
+  /** Shows another folder's History here, by its store key. */
+  bring?: (key: string) => void
+  /** Keeps the brought History in this folder. */
+  keep?: () => void
+  /** Takes the brought History back off. */
+  unbring?: () => void
 }
 
 /** How History fits the pane: narrow (filename-first, shorter titles), normal, or wide (list and diff side by side). */
@@ -202,7 +210,64 @@ export function layoutFor(width: number): Layout {
   return { width, narrow: width < NARROW_COLUMNS, wide: width >= WIDE_COLUMNS }
 }
 
-type ListOptions = { selected: string | null; width: number; narrow: boolean }
+type ListOptions = { selected: string | null; width: number; narrow: boolean; elsewhere?: readonly Elsewhere[]; brought?: Brought | null }
+
+/** Folders shown by name under an empty History; the rest are counted. */
+export const ELSEWHERE_SHOWN = 3
+
+/** The last folder of a path, for a short label. */
+function lastPart(path: string): string {
+  const parts = path.split('/').filter(Boolean)
+  return parts[parts.length - 1] ?? path
+}
+
+/**
+ * Under an empty History: the other folders whose history is kept, so a new worktree or a
+ * moved folder does not read as history lost. History is kept per folder path.
+ */
+export function elsewhereText(list: readonly Elsewhere[], now: number): string[] {
+  if (!list.length) return []
+  const head = `History is kept per folder. ${list.length} other folder${list.length === 1 ? ' has' : 's have'} some:`
+  const rows = list.slice(0, ELSEWHERE_SHOWN).map(e => `· ${lastPart(e.path)}  ${formatAt(e.used, now)}  ${formatBytes(e.bytes)}  ${e.path}`)
+  const more = list.length > ELSEWHERE_SHOWN ? [`and ${list.length - ELSEWHERE_SHOWN} more`] : []
+  return [head, ...rows, ...more]
+}
+
+function elsewhereLines(els: Els, list: readonly Elsewhere[], now: number, bring?: (key: string) => void) {
+  const lines = elsewhereText(list, now)
+  if (!lines.length) return null
+  const { Box, Text, Button } = els
+  // Each named folder gets a Bring button: its History shows here, nothing is copied.
+  return (
+    <Box key="elsewhere" flexDirection="column" marginTop={1}>
+      {lines.map((l, i) => {
+        const e = i >= 1 && i <= ELSEWHERE_SHOWN ? list[i - 1] : undefined
+        return e?.key && bring
+          ? (
+            <Box key={`elsewhere-${i}`} flexDirection="row" gap={1}>
+              <Button key={`bring-${i - 1}`} label="Bring" dimColor onPress={() => bring(e.key!)} />
+              <Text dimColor wrap="truncate-end">{l}</Text>
+            </Box>
+          )
+          : <Text key={`elsewhere-${i}`} dimColor wrap="truncate-end">{l}</Text>
+      })}
+    </Box>
+  )
+}
+
+/** Over History while another folder's turns are on show: how many, from where, and Keep or Undo. */
+function broughtStrip(els: Els, shown: Brought | null | undefined, actions: HistoryActions) {
+  if (!shown || shown.kept || !shown.turns.length) return null
+  const { Box, Text, Button } = els
+  const n = shown.turns.length
+  return (
+    <Box key="brought" flexDirection="row" flexWrap="wrap" gap={1} marginBottom={1}>
+      <Text color="claude">{`↪ ${n} turn${n === 1 ? '' : 's'} from ${lastPart(shown.from)}`}</Text>
+      {actions.keep ? <Button key="bring-keep" label="Keep" dimColor onPress={() => actions.keep!()} /> : null}
+      {actions.unbring ? <Button key="bring-undo" label="Undo" dimColor onPress={() => actions.unbring!()} /> : null}
+    </Box>
+  )
+}
 
 /**
  * A turn's title as coloured runs: the marker when selected, the time in blue (or
@@ -284,6 +349,7 @@ function summaryLine(els: Els, turn: Turn, isLive: boolean) {
   return (
     <Text wrap="wrap">
       {isLive ? <Text color="claude">working · </Text> : null}
+      {turn.from ? <Text dimColor>{`↪ ${lastPart(turn.from)} · `}</Text> : null}
       <Text dimColor>{`${filesText(turn)} · ${s.edits} edit${s.edits === 1 ? '' : 's'} · `}</Text>
       <Text color="success">{`+${s.add}`}</Text>
       <Text dimColor> </Text>
@@ -310,11 +376,13 @@ function timeline(els: Els, turns: readonly Turn[], actions: HistoryActions, now
       <Box key="timeline" flexDirection="column">
         <Text dimColor>No edits recorded yet.</Text>
         <Text dimColor>Edits Claude makes in this project show here, newest first.</Text>
+        {elsewhereLines(els, opts.elsewhere ?? [], now, actions.bring)}
       </Box>
     )
   }
   return (
     <Box key="timeline" flexDirection="column">
+      {broughtStrip(els, opts.brought, actions)}
       <Box key="timeline-head" flexDirection="row" flexWrap="wrap" gap={1} marginBottom={1}>
         <Text dimColor>{saved} turn{saved === 1 ? '' : 's'}{liveId ? ' · 1 running' : ''}{hidden ? ` · ${hidden} hidden (git-ignored files)` : ''}</Text>
         <Button key="export" label="Export" hotkey="e" dimColor onPress={() => actions.exportAll()} />
@@ -471,11 +539,11 @@ function stepper(
           {layout.narrow
             ? <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}><Text weight="semibold">{name}</Text>{dir ? <Text dimColor> {dir}</Text> : null}</Button>
             : <Button key="file-filter" plain onPress={() => set({ turn: null, file: step.path, step: 0 })}>{step.rel}</Button>}
-          <Button key="reveal" label="Show in Files" hotkey="o" dimColor onPress={() => actions.reveal(step.path)} />
-          <Button key="view-file" label="View file" hotkey="v" dimColor onPress={() => actions.view(step.path, step.line)} />
+          <Button key="reveal" label="Show in Files" hotkey="o" dimColor onPress={() => (turn.from ? actions.reveal(step.path, step.rel) : actions.reveal(step.path))} />
+          <Button key="view-file" label="View file" hotkey="v" dimColor onPress={() => (turn.from ? actions.view(step.path, step.line, step.rel) : actions.view(step.path, step.line))} />
         </Box>
         <Box key="meta" flexDirection="row" flexWrap="wrap" gap={2}>
-          <Text dimColor>{step.tool}{step.note ? ` · ${step.note}` : ''}{step.line !== null ? ` · line ${step.line}` : ''}{view.file !== null ? ` · ${formatAt(turn.at, now)}` : ''}</Text>
+          <Text dimColor>{step.tool}{step.note ? ` · ${step.note}` : ''}{step.line !== null ? ` · line ${step.line}` : ''}{view.file !== null ? ` · ${formatAt(turn.at, now)}` : ''}{turn.from ? ` · from ${lastPart(turn.from)}` : ''}</Text>
           <Text color="success">+{step.add}</Text>
           <Text color="error">-{step.del}</Text>
           {status ? <Text color={step.status === 'denied' ? 'error' : 'warning'}>{status}</Text> : null}
@@ -507,7 +575,7 @@ export const LIST_SHARE = 0.34
  */
 export function historyView(
   els: Els, allTurns: readonly Turn[], view: HistoryView, actions: HistoryActions, now: number, width: number,
-  liveId: string | null = null, ignored: readonly string[] = [],
+  liveId: string | null = null, ignored: readonly string[] = [], elsewhere: readonly Elsewhere[] = [], brought: Brought | null = null,
 ) {
   const layout = layoutFor(width)
   const isTimeline = view.turn === null && view.file === null
@@ -516,7 +584,7 @@ export function historyView(
   const stepTurns = (v: HistoryView) => (v.file !== null ? allTurns : turns)
   if (!layout.wide) {
     return isTimeline
-      ? timeline(els, turns, actions, now, liveId, { selected: null, width, narrow: layout.narrow }, hidden)
+      ? timeline(els, turns, actions, now, liveId, { selected: null, width, narrow: layout.narrow, elsewhere, brought }, hidden)
       : stepper(els, stepTurns(view), view, actions, now, layout, liveId)
   }
   const { Box, Text } = els
@@ -526,7 +594,7 @@ export function historyView(
   return (
     <Box key="wide" flexDirection="row" gap={2}>
       <Box key="wide-list" width={`${Math.round(LIST_SHARE * 100)}%`} flexDirection="column">
-        {timeline(els, turns, actions, now, liveId, { selected: shown.file === null ? shown.turn : null, width: listWidth, narrow: listWidth < NARROW_COLUMNS }, hidden)}
+        {timeline(els, turns, actions, now, liveId, { selected: shown.file === null ? shown.turn : null, width: listWidth, narrow: listWidth < NARROW_COLUMNS, elsewhere, brought }, hidden)}
       </Box>
       <Box key="wide-step" flexGrow={1} flexDirection="column">
         {turns.length

@@ -51,7 +51,16 @@ export type Turn = {
   steps: Step[]
   /** Calls of the turn that were refused or failed, in order; absent when none was. */
   blocked?: Blocked[]
+  /** The folder the turn was brought from (/trail bring); absent for a turn made here. */
+  from?: string
 }
+
+/**
+ * History brought from another folder: its key and folder, when, and the turns on show here.
+ * `kept`: moved here for good (no turns then, they are this folder's own), and /trail unbring
+ * can still move them back.
+ */
+export type Brought = { key: string; from: string; at: number; kept: boolean; turns: Turn[] }
 
 /**
  * Where the History tab stands. `turn` null and `file` null: the timeline.
@@ -236,6 +245,10 @@ declare module 'claude-code' {
       hint: Hint | null
       /** The turn running now, while it has edits: shown as "Now" on the timeline until it is saved. */
       live: Turn | null
+      /** Other folders with stored history (case-folded path, last use, bytes), named under an empty History. */
+      elsewhere: { path: string; used: number; bytes: number; key?: string; root?: string; same?: boolean }[]
+      /** History brought from another folder and on show (or kept) here; null when none is. */
+      brought: Brought | null
       /** The files the search box looks through; null until the first search, built again after each turn. */
       index: SearchIndex | null
       /** The last git actions run through Bash, newest last: running, then done or failed, until newer ones push them out. */
