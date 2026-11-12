@@ -11,7 +11,19 @@ export const MAX_HELPER_FILES = 30
 export const STRIP_MAX = 2
 
 /** What the engine's agent list says of a helper. */
-export type ListedAgent = { id: string; type: string; description: string; status: string }
+export type ListedAgent = { id: string; type: string; description: string; status: string; parentId?: string }
+
+/** What a spawn says of a helper: who it is, and where it came from when known. */
+export type Spawned = { id: string; type: string; description: string; turn?: string; parentId?: string; model?: string }
+
+/** The turn, parent and model of `from` that `to` lacks (a value it has is kept); keys with no value stay out. */
+function filled(to: Helper, from: { turn?: string; parentId?: string; model?: string }): Helper {
+  const out = { ...to }
+  if (out.turn === undefined && from.turn) out.turn = from.turn
+  if (out.parentId === undefined && from.parentId) out.parentId = from.parentId
+  if (out.model === undefined && from.model) out.model = from.model
+  return out
+}
 
 const lower = (s: string) => s.toLowerCase()
 
@@ -26,11 +38,14 @@ function capped(list: Helper[]): Helper[] {
   return list.filter(h => (over > 0 && h.state !== 'running' ? (over--, false) : true)).slice(-MAX_HELPERS)
 }
 
-/** A helper the engine has just started: it joins, or a known one takes the type and task it was spawned with. */
-export function joined(list: readonly Helper[], h: { id: string; type: string; description: string }, at: number): Helper[] {
+/**
+ * A helper the engine has just started: it joins, or a known one takes the type and task it was
+ * spawned with, and the turn, parent and model it lacks (a call can come before the spawn's answer).
+ */
+export function joined(list: readonly Helper[], h: Spawned, at: number): Helper[] {
   const known = list.find(x => x.id === h.id)
-  if (known) return list.map(x => (x.id === h.id ? { ...x, type: h.type, description: h.description } : x))
-  return capped([...list, fresh(h.id, at, h.type, h.description)])
+  if (known) return list.map(x => (x.id === h.id ? filled({ ...x, type: h.type, description: h.description }, h) : x))
+  return capped([...list, filled(fresh(h.id, at, h.type, h.description), h)])
 }
 
 /** A file added to a helper's files: a write outranks a read of the same file, and the oldest go past the cap. */
@@ -71,9 +86,10 @@ export function reconciled(list: readonly Helper[], engine: readonly ListedAgent
     const stands = GONE.has(a.status) ? (a.status === 'completed' ? 'done' : 'failed') : 'running'
     const known = out.find(x => x.id === a.id)
     if (!known) {
-      out = capped([...out, { ...fresh(a.id, at, a.type, a.description), state: stands, endedAt: stands === 'running' ? null : at }])
-    } else if (known.state === 'running' && stands !== 'running') {
-      out = out.map(x => (x.id === a.id ? { ...x, state: stands, endedAt: at } : x))
+      out = capped([...out, filled({ ...fresh(a.id, at, a.type, a.description), state: stands, endedAt: stands === 'running' ? null : at }, a)])
+    } else {
+      if (known.parentId === undefined && a.parentId) out = out.map(x => (x.id === a.id ? filled(x, a) : x))
+      if (known.state === 'running' && stands !== 'running') out = out.map(x => (x.id === a.id ? { ...x, state: stands, endedAt: at } : x))
     }
   }
   return out
