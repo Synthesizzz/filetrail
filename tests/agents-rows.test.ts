@@ -4,6 +4,8 @@ import { crabPose, factsOf, ganttCells, grouped, modelName } from '../hooks/agen
 import type { Helper } from '../types'
 
 const mate = (over: Partial<Helper> = {}): Helper => ({ id: 'a', type: 'developer', description: 'Do it', state: 'running', startedAt: 0, endedAt: null, calls: 0, files: [], ...over })
+/** factsOf with its no-break spaces read as plain ones, for the tests about what it says. */
+const flat = (s: string) => s.replace(/ /g, ' ')
 
 test('crabPose: thinking before the first file, then reading or writing as the last file says, cheering when done, sweating when failed', () => {
   expect(crabPose(mate())).toBe('think')
@@ -84,14 +86,19 @@ test('grouped: helpers with no turn (read back after a reload) are one group, al
 })
 
 test('factsOf: how it ended, the file it is on, how long, how many calls; "starting" before the first call', () => {
-  expect(factsOf(mate(), 4100)).toBe('starting · 4.1s')
-  expect(factsOf(mate({ calls: 1 }), 2000)).toBe('2.0s · 1 call')
-  expect(factsOf(mate({ calls: 6, files: [{ path: 'C:/p/x/a.md', tone: 'write' }] }), 78_000)).toBe('✎ a.md · 1m 18s · 6 calls')
-  expect(factsOf(mate({ state: 'done', endedAt: 5000, calls: 2, files: [{ path: 'C:/p/b.md', tone: 'read' }] }), 99_000)).toBe('done · ◉ b.md · 5.0s · 2 calls')
-  expect(factsOf(mate({ state: 'failed', endedAt: 1000, calls: 1 }), 99_000)).toBe('failed · 1.0s · 1 call')
+  expect(flat(factsOf(mate(), 4100))).toBe('starting · 4.1s')
+  expect(flat(factsOf(mate({ calls: 1 }), 2000))).toBe('2.0s · 1 call')
+  expect(flat(factsOf(mate({ calls: 6, files: [{ path: 'C:/p/x/a.md', tone: 'write' }] }), 78_000))).toBe('✎ a.md · 1m 18s · 6 calls')
+  expect(flat(factsOf(mate({ state: 'done', endedAt: 5000, calls: 2, files: [{ path: 'C:/p/b.md', tone: 'read' }] }), 99_000))).toBe('done · ◉ b.md · 5.0s · 2 calls')
+  expect(flat(factsOf(mate({ state: 'failed', endedAt: 1000, calls: 1 }), 99_000))).toBe('failed · 1.0s · 1 call')
+})
+
+test('factsOf: a narrow pane breaks the line only between facts, never inside "2 calls" or "◉ b.md"', () => {
+  const line = factsOf(mate({ model: 'claude-haiku-5-5', state: 'done', endedAt: 78_000, calls: 2, files: [{ path: 'C:/p/b c.md', tone: 'read' }] }), 99_000)
+  expect(line.split(' · ')).toEqual(['Haiku\u00a05.5', 'done', '◉\u00a0b\u00a0c.md', '1m\u00a018s', '2\u00a0calls'])
 })
 
 test('factsOf: the model it runs on comes first, when known', () => {
-  expect(factsOf(mate({ model: 'claude-haiku-5-5', calls: 1 }), 2000)).toBe('Haiku 5.5 · 2.0s · 1 call')
-  expect(factsOf(mate({ model: 'claude-opus-5-5', state: 'done', endedAt: 5000, calls: 2 }), 9000)).toBe('Opus 5.5 · done · 5.0s · 2 calls')
+  expect(flat(factsOf(mate({ model: 'claude-haiku-5-5', calls: 1 }), 2000))).toBe('Haiku 5.5 · 2.0s · 1 call')
+  expect(flat(factsOf(mate({ model: 'claude-opus-5-5', state: 'done', endedAt: 5000, calls: 2 }), 9000))).toBe('Opus 5.5 · done · 5.0s · 2 calls')
 })

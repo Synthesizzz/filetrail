@@ -118,7 +118,10 @@ export function grouped(list: readonly Helper[]): HelperGroup[] {
   return [...groups.values()].sort((a, b) => (!a.turn !== !b.turn ? (a.turn ? -1 : 1) : first(b) - first(a)))
 }
 
-/** The row's second line: how it ended (when it has), the file it is on, how long it worked, how many calls. */
+/**
+ * The row's second line: how it ended (when it has), the file it is on, how long it worked, how many calls.
+ * Spaces inside a fact are no-break, so a narrow pane wraps the line between facts only.
+ */
 export function factsOf(mate: Helper, now: number): string {
   const last = mate.files[mate.files.length - 1]
   const calls = mate.calls ? `${mate.calls} call${mate.calls === 1 ? '' : 's'}` : ''
@@ -128,7 +131,7 @@ export function factsOf(mate: Helper, now: number): string {
     last ? `${last.tone === 'write' ? '✎' : '◉'} ${splitPath(last.path).name}` : mate.state === 'running' && !mate.calls ? 'starting' : '',
     formatDuration(elapsed(mate, now)),
     calls,
-  ].filter(Boolean).join(' · ')
+  ].filter(Boolean).map(fact => fact.replace(/ /g, ' ')).join(' · ')
 }
 
 /** "3 calls · 2 files": what a helper has done, '' for nothing yet. */
