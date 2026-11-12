@@ -3,7 +3,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ContentHits, DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Helper, Hint, Stage, HistoryView, Preview, SearchIndex, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
+import type { Brought, ContentHits, DeletedBy, Entry, FilesView, TreeMode, GitActionEntry, GitInfo, Helper, Hint, Stage, HistoryView, Preview, SearchIndex, StaleMark, Step, StepStatus, Tab, TestRuns, Tone, TouchedFile, Turn } from '../types'
 import { BROWSE_MS, FLASH_MS, HOLD_MS, foldersTo, targetOf } from './activity'
 import type { Target } from './activity'
 import { hintFor, hintRow } from './band'
@@ -18,7 +18,8 @@ import { grepArgv, MIN_QUERY, parseGrep } from './grep'
 import type { GrepResult } from './grep'
 import { judge, MAX_WATCH_CHARS, namedFiles, snapshot } from './shell-change'
 import type { Snapshot } from './shell-change'
-import { dimensionsOf, imageKind, imageSvg, MAX_DRAW_BYTES } from './image'
+import { dimensionsOf, formatBytes, imageKind, imageSvg, MAX_DRAW_BYTES } from './image'
+import { formatAt } from './paths'
 import type { ImageKind } from './image'
 import { checksum, judgeStale, remember, staleLabel } from './stale'
 import type { ReadRecord } from './stale'
@@ -35,9 +36,9 @@ import { NO_SVG } from './octicons'
 import { isMarkdown, pageOf, pageText, PAGE_LINES, refusal } from './preview'
 import {
   addTurn, byteSize, BUDGET_BYTES, changeStep, deleteStep, EDIT_TOOLS, firstLine, INDEX_KEY, MAX_TURNS, normPath, outcomeOf, planBudget,
-  elsewhereOf, isInside, projectKey, relTo, stepsFor, trimTurnsToBytes,
+  bringCandidates, isInside, keepSplit, linkKey, mergeTurns, projectKey, relTo, stepsFor, trimTurnsToBytes, unbringSplit,
 } from './history'
-import type { EditCall, Elsewhere, StoreIndex } from './history'
+import type { BringLink, EditCall, Elsewhere, StoreIndex } from './history'
 import { historyView, TIMELINE } from './history-view'
 import { MAX_INDEX_FILES, parseLsFiles, SKIP_DIRS } from './search'
 import { joinPath, lower, parentOf, toEntries } from './tree'
@@ -54,8 +55,10 @@ const flash = atom({ plugin: 'filetrail', key: 'flash' } as const, {} as Record<
 const last = atom({ plugin: 'filetrail', key: 'last' } as const, null as { path: string; tone: Tone; at?: number } | null)
 const hint = atom({ plugin: 'filetrail', key: 'hint' } as const, null as Hint | null)
 const live = atom({ plugin: 'filetrail', key: 'live' } as const, null as Turn | null)
-// Other folders with stored history, for an empty History to name.
+// Other folders with stored history, this repo's first, for an empty History to name and offer to bring.
 const elsewhere = atom({ plugin: 'filetrail', key: 'elsewhere' } as const, [] as Elsewhere[])
+// History brought from another folder: on show beside this folder's own until kept or given back.
+const brought = atom({ plugin: 'filetrail', key: 'brought' } as const, null as Brought | null)
 const index = atom({ plugin: 'filetrail', key: 'index' } as const, null as SearchIndex | null)
 const gitLog = atom({ plugin: 'filetrail', key: 'actions' } as const, [] as GitActionEntry[])
 const stage = atom({ plugin: 'filetrail', key: 'stage' } as const, null as Stage | null)
@@ -139,6 +142,14 @@ function withLive(turns: readonly Turn[], now: Turn | null): readonly Turn[] {
 
 // The project whose history this session records: the cwd at session start.
 let root = ''
+// How far up History records edits: the repo's top, or the cwd when it is not a repo.
+let bound = ''
+// The repo's common git dir (absolute), the same in every worktree of it; undefined outside git.
+let repoDir: string | undefined
+// What the first ask at session start found, for refreshGit's first read: the top, or null outside git.
+let askedTop: { top: string | null } | null = null
+// The folders /trail bring listed last, by key, so a number picks what the person saw.
+let lastListed: string[] = []
 // The main-loop turn running now; its steps reach the store when it completes.
 let pending: Turn | null = null
 let callCount = 0
@@ -343,7 +354,7 @@ async function filesAt($: EngineInterface, path: string, out: string[] = []): Pr
 async function doomedBy($: EngineInterface, command: string): Promise<Doomed[]> {
   const out: Doomed[] = []
   for (const p of deleteTargets(command, root)) {
-    if (!isInside(root, p) || !(await $.fs.exists(p))) continue
+    if (!isInside(bound || root, p) || !(await $.fs.exists(p))) continue
     for (const f of await filesAt($, p)) {
       if (out.length >= MAX_DELETE_FILES) return out
       out.push({ path: f, text: await copyOf($, f) })
@@ -393,7 +404,7 @@ async function recordShellChanges($: EngineInterface, watched: readonly Watch[],
   const at = await $.clock.now()
   pending ??= { id: `t${at}`, at, prompt: '', steps: [] }
   const base = pending.id
-  pending.steps.push(...found.map(f => changeStep(f.w.path, root, f.w.before.text, f.text, f.note, at, `${base}.${callCount++}`)))
+  pending.steps.push(...found.map(f => changeStep(f.w.path, root, f.w.before.text, f.text, f.note, at, `${base}.${callCount++}`, bound || root)))
   await showLive($)
   for (const f of found) await touch($, { path: f.w.path, tone: 'write', follow: false, flag: f.flag })
 }
@@ -620,7 +631,7 @@ function claim<T extends { path: string }>(items: readonly T[]): T[] {
 async function recordDeleted($: EngineInterface, items: readonly Doomed[], by: DeletedBy) {
   if (!items.length) return
   const at = await $.clock.now()
-  const steps = items.map((i, k) => deleteStep(i.path, root, i.text, by, at, `d${at}.${deleteCount++}.${k}`))
+  const steps = items.map((i, k) => deleteStep(i.path, root, i.text, by, at, `d${at}.${deleteCount++}.${k}`, bound || root))
   if (by === 'claude' && pending) {
     pending.steps.push(...steps)
     await showLive($)
@@ -720,8 +731,10 @@ async function relist($: EngineInterface) {
 async function refreshGit($: EngineInterface) {
   if (isRepo === false) return
   const opts = { cwd: root, timeoutMs: 10_000 }
-  const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'], opts)
-  isRepo = top.exitCode === 0
+  const first = askedTop
+  askedTop = null
+  const topPath = first ? first.top : await askTop($)
+  isRepo = topPath !== null
   if (!isRepo) {
     await update($, git, () => null)
     return
@@ -730,7 +743,7 @@ async function refreshGit($: EngineInterface) {
   // HEAD is missing before the first commit: no line counts then.
   const numstat = await $.process.run(['git', 'diff', '--numstat', 'HEAD'], opts)
   const info: GitInfo = {
-    top: normPath(top.stdout.trim()),
+    top: topPath!,
     ...parseStatus(status.exitCode === 0 ? status.stdout : ''),
     numstat: numstat.exitCode === 0 ? parseNumstat(numstat.stdout) : {},
   }
@@ -744,7 +757,7 @@ async function refreshGit($: EngineInterface) {
     if (fresh.length) {
       const listed = await $.process.run(['git', 'ls-files', '--deleted', '-z', '--full-name'], opts)
       const spelled = listed.exitCode === 0 ? listed.stdout.split('\0').filter(Boolean) : []
-      const paths = spelled.filter(rel => fresh.includes(lower(rel))).map(rel => joinPath(info.top, rel)).filter(p => isInside(root, p))
+      const paths = spelled.filter(rel => fresh.includes(lower(rel))).map(rel => joinPath(info.top, rel)).filter(p => isInside(bound, p))
       await recordFoundGone($, paths).catch(err => $.ui.log(`filetrail: a deletion was not recorded: ${String(err)}`))
     }
   }
@@ -757,13 +770,14 @@ async function refreshGit($: EngineInterface) {
  * stdin; a tracked file is never reported, git's rules being for untracked ones.
  */
 async function refreshIgnored($: EngineInterface) {
-  const paths = [...new Set((await read($, history)).flatMap(t => t.steps.map(s => s.path)))].filter(p => isInside(root, p))
+  const top = bound || root
+  const paths = [...new Set((await read($, history)).flatMap(t => t.steps.map(s => s.path)))].filter(p => isInside(top, p))
   if (!paths.length) return
-  const rels = paths.map(p => relTo(root, p))
-  const asked = await $.process.run(['git', 'check-ignore', '--stdin'], { cwd: root, timeoutMs: 10_000, stdin: rels.join('\n') + '\n' })
+  const rels = paths.map(p => relTo(top, p))
+  const asked = await $.process.run(['git', 'check-ignore', '--stdin'], { cwd: top, timeoutMs: 10_000, stdin: rels.join('\n') + '\n' })
   // 0: some are ignored, 1: none is; anything else is git failing, and leaves the list as it was.
   if (asked.exitCode !== 0 && asked.exitCode !== 1) return
-  const out = asked.exitCode === 0 ? asked.stdout.split(/\r?\n/).filter(Boolean).map(rel => lower(joinPath(root, rel))) : []
+  const out = asked.exitCode === 0 ? asked.stdout.split(/\r?\n/).filter(Boolean).map(rel => lower(joinPath(top, rel))) : []
   await update($, ignored, () => out)
 }
 
@@ -773,12 +787,91 @@ function scheduleGit($: EngineInterface) {
   gitTimer = $.clock.after(600, () => void refreshGit($).catch(err => $.ui.log(`filetrail: git status failed: ${String(err)}`)))
 }
 
+/**
+ * Asks git once for the repo's common dir and top (`--path-format` needs git 2.31): the top
+ * becomes how far up History records, the common dir names the repo in the store's index.
+ * One line back (an older git) is the top alone. Answers the top, or null outside git.
+ */
+async function askTop($: EngineInterface): Promise<string | null> {
+  const argv = ['git', 'rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel']
+  const ran = await $.process.run(argv, { cwd: root, timeoutMs: 10_000 }).catch(() => null)
+  const lines = ran && ran.exitCode === 0 ? ran.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean) : []
+  if (!lines.length) {
+    bound = root
+    repoDir = undefined
+    return null
+  }
+  const top = normPath(lines[lines.length - 1]!)
+  repoDir = lines.length === 2 ? normPath(lines[0]!) : undefined
+  // A top that does not hold the folder (git answering for somewhere else) bounds nothing more.
+  bound = isInside(top, root) ? top : root
+  return top
+}
+
+/** Other folders with History, this repo's first, for the empty History page and /trail bring. */
+async function refreshElsewhere($: EngineInterface) {
+  const idx = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
+  await update($, elsewhere, () => bringCandidates(idx, projectKey(root), { root, repo: repoDir }))
+}
+
+/** History brought here earlier: the link and, until kept, the origin's turns as they are now. */
+async function loadLink($: EngineInterface) {
+  const key = projectKey(root)
+  const link = (await $.store.get(linkKey(key))) as BringLink | undefined
+  if (!link || typeof link.key !== 'string') {
+    await update($, brought, () => null)
+    return
+  }
+  if (link.kept) {
+    await update($, brought, () => ({ key: link.key, from: link.root, at: link.at, kept: true, turns: [] }))
+    return
+  }
+  const src = await $.store.get(link.key)
+  if (!Array.isArray(src)) {
+    await $.store.delete(linkKey(key))
+    $.ui.log(`filetrail: History brought from ${link.root} is no longer kept there, so it is not on show here any more.`)
+    await update($, brought, () => null)
+    return
+  }
+  await update($, brought, () => ({ key: link.key, from: link.root, at: link.at, kept: false, turns: (src as Turn[]).map(t => ({ ...t, from: link.root })) }))
+}
+
 async function loadHistory($: EngineInterface) {
   try { root = await $.session.cwd() } catch { root = '' }
+  askedTop = { top: await askTop($) }
   const saved = await $.store.get(projectKey(root))
   await update($, history, () => (Array.isArray(saved) ? (saved as Turn[]) : []))
-  const idx = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
-  await update($, elsewhere, () => elsewhereOf(idx, projectKey(root)))
+  await loadLink($)
+  await refreshElsewhere($)
+}
+
+/** This folder's turns and the ones brought here, oldest first: what History shows. */
+async function shownTurns($: EngineInterface): Promise<Turn[]> {
+  const own = await read($, history)
+  const extra = await read($, brought)
+  return extra?.turns.length ? [...extra.turns, ...own].sort((a, b) => a.at - b.at) : own
+}
+
+/** This folder's index entry with new bytes: the folder as spelled and its repo, keeping what other writers put there (a hold). */
+function entryFor(index: StoreIndex, key: string, bytes: number, used: number) {
+  return { ...index[key], used, bytes, root: normPath(root).replace(/\/+$/, ''), ...(repoDir ? { repo: repoDir } : {}) }
+}
+
+/** Writes this folder's turns and keeps every project inside the store's budget. */
+async function writeOwn($: EngineInterface, list: readonly Turn[]) {
+  const key = projectKey(root)
+  let turns = [...list]
+  const index = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
+  const plan = planBudget(index, key, byteSize(turns), BUDGET_BYTES)
+  for (const k of plan.evict) {
+    await $.store.delete(k)
+    delete index[k]
+  }
+  if (!plan.fits) turns = trimTurnsToBytes(turns, BUDGET_BYTES)
+  await $.store.set(key, turns)
+  index[key] = entryFor(index, key, byteSize(turns), await $.clock.now())
+  await $.store.set(INDEX_KEY, index)
+  await update($, history, () => turns)
 }
 
 /** Shows the running turn as it stands: a copy, since its steps change as the tools answer. */
@@ -790,24 +883,156 @@ async function showLive($: EngineInterface) {
 
 /** Adds a finished turn to the project's history and keeps every project inside the store's budget. */
 async function saveTurn($: EngineInterface, turn: Turn) {
-  const key = projectKey(root)
-  let turns = addTurn(await read($, history), turn, MAX_TURNS)
+  // From the store's copy, not the one loaded at session start: another folder may have kept
+  // (moved) these turns since, or given some back, and a stale copy would write them again.
+  let stored: unknown
+  try { stored = await $.store.get(projectKey(root)) } catch { stored = await read($, history) }
+  await writeOwn($, addTurn(Array.isArray(stored) ? (stored as Turn[]) : [], turn, MAX_TURNS))
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/** The folders that have History, numbered as /trail bring takes them, this repo's first. */
+async function bringList($: EngineInterface): Promise<string> {
+  await refreshElsewhere($)
+  const list = await read($, elsewhere)
+  lastListed = list.map(e => e.key!)
+  const held = await read($, brought)
+  const pending = held && !held.kept ? `History from ${held.from} is on show here now: /trail bring keep keeps it, /trail unbring takes it back off.\n\n` : ''
+  if (!list.length) return `${pending}filetrail: no other folder has History kept.`
+  const now = await $.clock.now()
+  const rows = list.map((e, k) => `${k + 1}. ${folderName(e.root ?? e.path)}${e.same ? ' (this repo)' : ''} · ${formatAt(e.used, now)} · ${formatBytes(e.bytes)} · ${e.root ?? e.path}`)
+  return `${pending}filetrail: folders with History kept, this repo's first:\n\n${rows.join('\n')}\n\nRun /trail bring 1 (or another number) to show that folder's History here. Nothing is copied: it stays there until you keep it.`
+}
+
+/**
+ * Shows another folder's History here: a link beside this folder's key, and a hold on the
+ * origin so the store's budget drops it last. Nothing is copied and the origin is not touched.
+ */
+async function bringFrom($: EngineInterface, srcKey: string): Promise<string> {
+  const here = projectKey(root)
+  if (srcKey === here) return 'filetrail: that is this folder.'
+  const held = (await $.store.get(linkKey(here))) as BringLink | undefined
+  if (held && !held.kept) return `filetrail: History from ${held.root} is already on show here. Run /trail bring keep to keep it or /trail unbring to take it back off first.`
+  const theirs = (await $.store.get(linkKey(srcKey))) as BringLink | undefined
+  if (theirs && !theirs.kept) return `filetrail: that folder shows History brought from ${theirs.root}, not yet kept. Keep it or take it back there first.`
+  const src = await $.store.get(srcKey)
   const index = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
-  const plan = planBudget(index, key, byteSize(turns), BUDGET_BYTES)
-  for (const k of plan.evict) {
-    await $.store.delete(k)
-    delete index[k]
-  }
-  if (!plan.fits) turns = trimTurnsToBytes(turns, BUDGET_BYTES)
-  await $.store.set(key, turns)
-  index[key] = { used: await $.clock.now(), bytes: byteSize(turns) }
+  const entry = index[srcKey]
+  if (!Array.isArray(src) || !src.length) return 'filetrail: that folder has no History to bring any more.'
+  if (entry?.heldBy && entry.heldBy !== here) return 'filetrail: another folder shows that History right now. Keep it or take it back there first.'
+  const from = entry?.root ?? srcKey.slice(2)
+  const link: BringLink = { key: srcKey, root: from, at: await $.clock.now(), kept: false }
+  await $.store.set(linkKey(here), link)
+  index[srcKey] = { ...(entry ?? { used: 0, bytes: byteSize(src) }), heldBy: here }
   await $.store.set(INDEX_KEY, index)
-  await update($, history, () => turns)
+  await loadLink($)
+  await refreshElsewhere($)
+  await update($, view, () => TIMELINE)
+  const n = (src as Turn[]).length
+  return `filetrail: brought ${plural(n, 'turn')} from ${from}. They show in History, marked; nothing was copied and ${folderName(from)} keeps them. Run /trail bring keep to move them here for good, or /trail unbring to take them back off.`
+}
+
+/** Lifts the hold this folder put on another's History (if the hold is still this folder's). */
+async function releaseHold(index: StoreIndex, srcKey: string) {
+  const entry = index[srcKey]
+  if (entry?.heldBy === projectKey(root)) {
+    const { heldBy: _held, ...rest } = entry
+    index[srcKey] = rest
+  }
+}
+
+/**
+ * Keeps the brought History: the origin's turns move here, marked `from`; what does not fit in
+ * this folder's turns stays with the origin, and an origin left empty is removed. The origin is
+ * written first, so the budget never counts the moved turns twice.
+ */
+async function keepBrought($: EngineInterface): Promise<string> {
+  const here = projectKey(root)
+  const link = (await $.store.get(linkKey(here))) as BringLink | undefined
+  if (!link || link.kept) return 'filetrail: nothing brought is waiting to be kept here.'
+  const src = await $.store.get(link.key)
+  if (!Array.isArray(src)) {
+    await $.store.delete(linkKey(here))
+    await update($, brought, () => null)
+    return `filetrail: ${link.root} no longer keeps that History, so there is nothing to keep.`
+  }
+  const own = (await $.store.get(here)) as Turn[] | undefined
+  const { kept, left } = keepSplit(Array.isArray(own) ? own : [], src as Turn[], link.root)
+  const index = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
+  await releaseHold(index, link.key)
+  if (left.length) {
+    await $.store.set(link.key, left)
+    index[link.key] = { ...index[link.key]!, bytes: byteSize(left) }
+  } else {
+    await $.store.delete(link.key)
+    delete index[link.key]
+  }
+  await $.store.set(INDEX_KEY, index)
+  await writeOwn($, kept)
+  await $.store.set(linkKey(here), { ...link, kept: true, at: await $.clock.now() })
+  await loadLink($)
+  await refreshElsewhere($)
+  const moved = kept.filter(t => t.from === link.root).length
+  return `filetrail: kept ${plural(moved, 'turn')} from ${link.root} in this folder's History${left.length ? `; ${left.length} older stay in ${folderName(link.root)} (this folder keeps ${MAX_TURNS} turns)` : ''}. /trail unbring still moves them back.`
+}
+
+/**
+ * Takes the brought History back off: before Keep only the link and the hold go; after Keep the
+ * turns marked from the origin move back there, unmarked.
+ */
+async function unbring($: EngineInterface): Promise<string> {
+  const here = projectKey(root)
+  const link = (await $.store.get(linkKey(here))) as BringLink | undefined
+  if (!link) return 'filetrail: nothing brought here to take back.'
+  const index = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
+  if (!link.kept) {
+    const src = await $.store.get(link.key)
+    await releaseHold(index, link.key)
+    await $.store.set(INDEX_KEY, index)
+    await $.store.delete(linkKey(here))
+    await update($, brought, () => null)
+    await refreshElsewhere($)
+    await update($, view, () => TIMELINE)
+    const n = Array.isArray(src) ? src.length : 0
+    return `filetrail: took the ${plural(n, 'turn')} from ${link.root} back off this folder's History; ${folderName(link.root)} keeps them as they were.`
+  }
+  const own = (await $.store.get(here)) as Turn[] | undefined
+  const { stay, back } = unbringSplit(Array.isArray(own) ? own : [], link.root)
+  await writeOwn($, stay)
+  if (back.length) {
+    const theirs = await $.store.get(link.key)
+    const merged = mergeTurns(Array.isArray(theirs) ? (theirs as Turn[]) : [], back)
+    const idx = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
+    await $.store.set(link.key, merged)
+    idx[link.key] = { ...(idx[link.key] ?? { used: link.at }), bytes: byteSize(merged), root: link.root }
+    await $.store.set(INDEX_KEY, idx)
+  }
+  await $.store.delete(linkKey(here))
+  await update($, brought, () => null)
+  await refreshElsewhere($)
+  await update($, view, () => TIMELINE)
+  return `filetrail: moved ${plural(back.length, 'turn')} back to ${link.root}.`
+}
+
+/**
+ * Where a brought step's file is now: the same path in this folder (or from the repo's top),
+ * else its old path if that is still there, else null.
+ */
+async function placeHere($: EngineInterface, path: string, rel: string): Promise<string | null> {
+  if (!/^([A-Za-z]:|\/)/.test(rel)) {
+    for (const base of [root, bound]) {
+      if (!base) continue
+      const p = joinPath(base, rel)
+      if (await $.fs.exists(p).catch(() => false)) return p
+    }
+  }
+  return (await $.fs.exists(path).catch(() => false)) ? path : null
 }
 
 /** Writes this project's history to ~/.claude/filetrail/exports and says where, slashes forward. */
 async function exportHistory($: EngineInterface): Promise<string> {
-  const turns = await read($, history)
+  const turns = await shownTurns($)
   if (!turns.length) return 'filetrail: nothing to export yet, no edits recorded in this project.'
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
   if (!home) return 'filetrail: could not find the home folder (HOME and USERPROFILE are unset), so nothing was exported.'
@@ -831,8 +1056,15 @@ async function clearHistory($: EngineInterface): Promise<number> {
   await $.store.delete(key)
   const index = ((await $.store.get(INDEX_KEY)) ?? {}) as StoreIndex
   delete index[key]
+  // History brought here goes too; the origin is left as it is.
+  const link = (await $.store.get(linkKey(key))) as BringLink | undefined
+  if (link) {
+    await releaseHold(index, link.key)
+    await $.store.delete(linkKey(key))
+  }
   await $.store.set(INDEX_KEY, index)
   await update($, history, () => [])
+  await update($, brought, () => null)
   await update($, view, () => TIMELINE)
   return count
 }
@@ -1054,7 +1286,7 @@ async function refreshPreview($: EngineInterface, path: string): Promise<void> {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({ name: 'trail', description: 'Show the filetrail pane (file tree, edit history and helpers); args: agents, replay, export, clear' })
+    await $.command.register({ name: 'trail', description: 'Show the filetrail pane (file tree, edit history and helpers); args: agents, replay, export, bring, unbring, clear' })
     try { await loadHistory($) } catch (err) { $.ui.log(`filetrail: history did not load: ${String(err)}`) }
     await readGuards($).then(list => update($, guards, () => list)).catch(err => $.ui.log(`filetrail: guards did not load: ${String(err)}`))
     // A reload forgets the running turn's steps, so a Now row left in state would never be saved.
@@ -1235,7 +1467,7 @@ export const register: Register = on => {
       if (call.file_path && (await $.fs.exists(call.file_path))) before = String(await $.fs.read(call.file_path))
       const at = await $.clock.now()
       pending ??= { id: `t${at}`, at, prompt: '', steps: [] }
-      steps = stepsFor(call, before, root, at, `${pending.id}.${callCount++}`)
+      steps = stepsFor(call, before, root, at, `${pending.id}.${callCount++}`, bound || root)
       pending.steps.push(...steps)
       if (steps.length) await showLive($)
     } catch (err) {
@@ -1336,10 +1568,25 @@ export const register: Register = on => {
     }
     if (args === 'export') return { text: await exportHistory($) }
     if (args === 'replay') {
-      const latest = (await read($, history)).filter(t => t.steps.length || !t.blocked?.length).at(-1)
+      const latest = (await shownTurns($)).filter(t => t.steps.length || !t.blocked?.length).at(-1)
       if (!latest) return { text: 'filetrail: no edits recorded in this project yet.' }
       await openReplay($, latest.id)
       return { text: `filetrail: replaying ${latest.steps.length} edit${latest.steps.length === 1 ? '' : 's'} from ${stamp(latest.at)}.` }
+    }
+    if (args === 'bring') return { text: await bringList($) }
+    if (args === 'bring keep') return { text: await keepBrought($) }
+    if (args === 'unbring') return { text: await unbring($) }
+    const pick = /^bring (\d+)$/.exec(args)
+    if (pick) {
+      const n = Number(pick[1])
+      const shown = lastListed
+      await refreshElsewhere($)
+      const now = (await read($, elsewhere)).map(e => e.key!)
+      // A number means what the person saw: a list that changed since is shown again, not guessed.
+      if (!shown.length || shown[n - 1] === undefined || now[n - 1] !== shown[n - 1]) {
+        return { text: `${shown.length ? 'filetrail: the list changed since it was shown.\n\n' : ''}${await bringList($)}` }
+      }
+      return { text: await bringFrom($, now[n - 1]!) }
     }
     // Clearing cannot be undone, so it asks for the word first.
     if (args === 'clear') {
@@ -1350,7 +1597,7 @@ export const register: Register = on => {
       const n = await clearHistory($)
       return { text: `filetrail: cleared ${n} turn${n === 1 ? '' : 's'} of history for ${projectName(root)}.` }
     }
-    return { text: 'filetrail: /trail opens the pane, /trail agents shows the helpers Claude started, /trail replay steps through the last turn\'s edits, /trail export writes the history as Markdown, /trail clear deletes this project\'s history.' }
+    return { text: 'filetrail: /trail opens the pane, /trail agents shows the helpers Claude started, /trail replay steps through the last turn\'s edits, /trail export writes the history as Markdown, /trail bring shows another folder\'s history here (/trail bring keep keeps it, /trail unbring takes it back), /trail clear deletes this project\'s history.' }
   })
 
   // The band above the prompt: the offer to replay the last turn that changed files,
@@ -1593,20 +1840,33 @@ export const register: Register = on => {
                   await reveal($, joinPath(root, rel), true)
                 }),
               }, e.props.bodyColumns, await read($, index), await read($, gitLog), await read($, preview), await read($, touched), await read($, stage), await read($, working), await read($, turnFiles), await read($, tests), await read($, stale), mates, await read($, guards), await read($, outside), await read($, contentHits))
-            : historyView(els, turnsAll, await read($, view), {
+            : historyView(els, withLive(await shownTurns($), running), await read($, view), {
                 set: v => fire($, 'moving in history', () => update($, view, () => v)),
                 ask: (step, turn) => fire($, 'asking Claude', () => askAbout($, step, turn)),
                 exportAll: () => fire($, 'exporting', async () => $.ui.toast(await exportHistory($))),
                 close: () => fire($, 'closing the pane', () => $.ui.close({ id: PANE })),
-                view: (path, line) => fire($, 'showing the file', async () => {
+                view: (path, line, rel) => fire($, 'showing the file', async () => {
+                  // A brought step's file: the same one in this folder when it is here.
+                  const at = rel === undefined ? path : (await placeHere($, path, rel)) ?? path
                   await update($, tab, () => 'files')
-                  await loadPreview($, path, pageOf(line))
+                  await loadPreview($, at, pageOf(line))
                 }),
-                reveal: path => fire($, 'showing in Files', async () => {
+                reveal: (path, rel) => fire($, 'showing in Files', async () => {
+                  const at = rel === undefined ? path : await placeHere($, path, rel)
+                  if (at === null || !isInside(root, at)) {
+                    const from = (await read($, brought))?.from ?? path
+                    $.ui.toast(at === null
+                      ? `filetrail: ${rel ?? path} is not in this folder, and ${folderName(from)} no longer has it.`
+                      : `filetrail: ${normPath(at)} is outside this folder, in ${folderName(from)}: View file shows it.`)
+                    return
+                  }
                   await update($, tab, () => 'files')
-                  await reveal($, path, true)
+                  await reveal($, at, true)
                 }),
-              }, await $.clock.now(), e.props.bodyColumns, running?.id ?? null, await read($, ignored), await read($, elsewhere))}
+                bring: key => fire($, 'bringing History', async () => $.ui.toast(await bringFrom($, key))),
+                keep: () => fire($, 'keeping brought History', async () => $.ui.toast(await keepBrought($))),
+                unbring: () => fire($, 'taking brought History back', async () => $.ui.toast(await unbring($))),
+              }, await $.clock.now(), e.props.bodyColumns, running?.id ?? null, await read($, ignored), await read($, elsewhere), await read($, brought))}
         </Box>
       </Box>
     )

@@ -12,7 +12,7 @@ export const KEY = 'p:c:/work/demo'
 export const DONE = { durationMs: 1, isAborted: false, reason: 'answer', text: '', answer: '' } as const
 
 /** What `git` answers: the repo's top, `status --porcelain=v1 -b -z` and `diff --numstat HEAD`. */
-export type GitWorld = { top: string; status: string; numstat: string; lsFiles?: string; show?: string; ignored?: string; head?: string; log?: string }
+export type GitWorld = { top: string; common?: string; status: string; numstat: string; lsFiles?: string; show?: string; ignored?: string; head?: string; log?: string }
 
 export type WorldOptions = {
   files?: Record<string, string>
@@ -130,7 +130,9 @@ export function world(on: any, { files = {}, stored = {}, now = 1_800_000_000_00
       return end ? { value: { exitCode: end.exitCode, stdout: '', stderr: end.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } } : out('')
     }
     if (!git) return out('', 128)
-    // `rev-parse HEAD` answers the commit a test sets; any other rev-parse is the repo's top.
+    // `rev-parse HEAD` answers the commit a test sets; asked for the common dir as well, that and the
+    // top on two lines (the common dir a test sets, else the top's .git); any other rev-parse is the top.
+    if (argv[1] === 'rev-parse' && argv.includes('--git-common-dir')) return out(`${git.common ?? `${git.top}/.git`}\n${git.top}\n`)
     if (argv[1] === 'rev-parse') return out(argv[2] === 'HEAD' ? `${git.head ?? 'h0'}\n` : `${git.top}\n`)
     if (argv[1] === 'status') return out(git.status)
     // `git diff --name-only <from>..HEAD` answers the files a test says a commit held; any other diff is the numstat.

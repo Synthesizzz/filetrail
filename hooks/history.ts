@@ -13,8 +13,24 @@ export const MAX_STEP_LINES = 200
 export const BUDGET_BYTES = 3 * 1024 * 1024
 export const INDEX_KEY = 'index'
 
-/** Where each project's history sits in the store: last use and size. */
-export type StoreIndex = Record<string, { used: number; bytes: number }>
+/**
+ * Where each project's history sits in the store: last use and size; the folder as spelled and
+ * its repo (git's common dir, absolute) once a save has written them; `heldBy` when another
+ * folder shows this one's turns as brought, until it keeps or gives them back.
+ */
+export type IndexEntry = { used: number; bytes: number; root?: string; repo?: string; heldBy?: string }
+export type StoreIndex = Record<string, IndexEntry>
+
+/**
+ * History brought from another folder, kept at `b:<path>` beside this folder's own key: the
+ * origin's key and folder, when, and whether it was kept (moved here) or is still only shown.
+ */
+export type BringLink = { key: string; root: string; at: number; kept?: boolean }
+
+/** The store key of the link a folder's History holds to another's. */
+export function linkKey(key: string): string {
+  return 'b:' + key.slice(2)
+}
 
 /** The fields of an Edit, Write or MultiEdit call that make a step. */
 export type EditCall = {
@@ -31,8 +47,11 @@ export function normPath(path: string): string {
   return path.replace(/\\/g, '/')
 }
 
-/** Another folder whose history the store holds: its path (case-folded, as keyed), last use and size. */
-export type Elsewhere = { path: string; used: number; bytes: number }
+/**
+ * Another folder whose history the store holds: its path (case-folded, as keyed), last use and
+ * size; as a candidate to bring, also its key, its folder as spelled and whether it is this repo's.
+ */
+export type Elsewhere = { path: string; used: number; bytes: number; key?: string; root?: string; same?: boolean }
 
 /**
  * The folders other than `key` that have history stored, most recently used first. History is
@@ -43,6 +62,37 @@ export function elsewhereOf(index: StoreIndex, key: string): Elsewhere[] {
     .filter(([k]) => k.startsWith('p:') && k !== key)
     .map(([k, v]) => ({ path: k.slice(2), used: v.used, bytes: v.bytes }))
     .sort((a, b) => b.used - a.used)
+}
+
+const WORKTREES = '/.claude/worktrees/'
+
+/**
+ * The folder a repo is checked out in, case-folded: its common dir without `/.git` when known,
+ * else the path cut where a desktop worktree folder starts (`<repo>/.claude/worktrees/<name>`).
+ */
+export function mainOf(path: string, repo?: string): string {
+  if (repo) return normPath(repo).replace(/\/+$/, '').replace(/\/\.git$/i, '').toLowerCase()
+  const p = normPath(path).replace(/\/+$/, '').toLowerCase()
+  const at = p.indexOf(WORKTREES)
+  return at >= 0 ? p.slice(0, at) : p
+}
+
+/**
+ * The folders whose History could be brought here, this repo's first, then by last use. An entry
+ * with its repo written is this repo's when the repos match; an older one is guessed from its path:
+ * the repo's folder, a folder under it, or one of its worktrees. Folders held by another are left out.
+ */
+export function bringCandidates(index: StoreIndex, key: string, here: { root: string; repo?: string }): Elsewhere[] {
+  const main = mainOf(here.root, here.repo)
+  const same = (k: string, v: IndexEntry) => {
+    if (v.repo) return mainOf('', v.repo) === main
+    const m = mainOf(k.slice(2))
+    return m === main || m.startsWith(main + '/')
+  }
+  return Object.entries(index)
+    .filter(([k, v]) => k.startsWith('p:') && k !== key && !v.heldBy)
+    .map(([k, v]) => ({ path: k.slice(2), used: v.used, bytes: v.bytes, key: k, root: v.root ?? k.slice(2), same: same(k, v) }))
+    .sort((a, b) => Number(b.same) - Number(a.same) || b.used - a.used)
 }
 
 /** The store key of a project's history: its root, case-folded (Windows paths ignore case). */
@@ -83,16 +133,21 @@ export function isInside(root: string, path: string): boolean {
   return !root || relTo(root, path) !== normPath(path)
 }
 
+/** A path as History names it: from the folder the session started in, or from the repo's top when it sits above that folder. */
+export function relHere(root: string, bound: string, path: string): string {
+  return isInside(root, path) ? relTo(root, path) : relTo(bound, path)
+}
+
 /**
  * The steps one edit call makes. `before` is the file's text before the call,
  * null when the file did not exist or could not be read. A file outside the
- * project makes none: the history is the project's.
+ * project (the repo's top, `bound`, or the folder when it is not a repo) makes none: the history is the project's.
  */
-export function stepsFor(call: EditCall, before: string | null, root: string, at: number, idBase: string): Step[] {
+export function stepsFor(call: EditCall, before: string | null, root: string, at: number, idBase: string, bound = root): Step[] {
   if (!EDIT_TOOLS.has(call.tool) || !call.file_path) return []
   const path = normPath(call.file_path)
-  if (!isInside(root, path)) return []
-  const rel = relTo(root, path)
+  if (!isInside(bound, path)) return []
+  const rel = relHere(root, bound, path)
   if (call.tool === 'Edit') {
     return [step({
       id: `${idBase}.0`, path, rel, tool: 'Edit', note: call.replace_all ? 'replace all' : '',
@@ -116,17 +171,17 @@ export function stepsFor(call: EditCall, before: string | null, root: string, at
  * any step's diff is), so History shows what was in it. `text` null: no copy (binary,
  * too large, or gone before it could be read).
  */
-export function deleteStep(path: string, root: string, text: string | null, by: DeletedBy, at: number, id: string): Step {
+export function deleteStep(path: string, root: string, text: string | null, by: DeletedBy, at: number, id: string, bound = root): Step {
   const note = [by === 'you' ? 'deleted by you' : 'deleted', ...(text === null ? ['no copy kept'] : [])].join(' · ')
-  return { ...step({ id, path: normPath(path), rel: relTo(root, normPath(path)), tool: 'Delete', note, line: null, at }, text ?? '', ''), status: 'ok' }
+  return { ...step({ id, path: normPath(path), rel: relHere(root, bound, normPath(path)), tool: 'Delete', note, line: null, at }, text ?? '', ''), status: 'ok' }
 }
 
 /**
  * A file a shell command shrank or overwrote, as a step: the diff from the text before to the
  * text after, so the removed lines are a copy of the old text, capped as any step's diff is.
  */
-export function changeStep(path: string, root: string, before: string, after: string, note: string, at: number, id: string): Step {
-  return { ...step({ id, path: normPath(path), rel: relTo(root, normPath(path)), tool: 'Bash', note, line: null, at }, before, after), status: 'ok' }
+export function changeStep(path: string, root: string, before: string, after: string, note: string, at: number, id: string, bound = root): Step {
+  return { ...step({ id, path: normPath(path), rel: relHere(root, bound, normPath(path)), tool: 'Bash', note, line: null, at }, before, after), status: 'ok' }
 }
 
 /** What `next(e)` of a tool call resolved to, as a step status. */
@@ -150,6 +205,36 @@ export function addTurn(turns: readonly Turn[], turn: Turn, max = MAX_TURNS): Tu
   return kept.filter(t => (over > 0 && !blockedOnly(t) ? (over--, false) : true))
 }
 
+/**
+ * Two folders' turns as one History, oldest first, by `addTurn`'s rules: the newest MAX_TURNS
+ * edit turns and MAX_BLOCKED_ONLY blocked-only ones; a turn whose id is in both is kept once.
+ */
+export function mergeTurns(a: readonly Turn[], b: readonly Turn[], max = MAX_TURNS): Turn[] {
+  let kept: Turn[] = []
+  for (const t of [...a, ...b].sort((x, y) => x.at - y.at)) kept = addTurn(kept, t, max)
+  return kept
+}
+
+/**
+ * Keeping brought turns: the origin's turns, each marked `from`, join this folder's own; what the
+ * budget of turns leaves out stays with the origin, unmarked, so nothing is lost.
+ */
+export function keepSplit(own: readonly Turn[], origin: readonly Turn[], from: string): { kept: Turn[]; left: Turn[] } {
+  const kept = mergeTurns(own, origin.map(t => ({ ...t, from })))
+  const ids = new Set(kept.map(t => t.id))
+  return { kept, left: origin.filter(t => !ids.has(t.id)) }
+}
+
+/** Giving kept turns back: this folder's turns from `from` (any case) leave, without the mark; the rest stay. */
+export function unbringSplit(own: readonly Turn[], from: string): { stay: Turn[]; back: Turn[] } {
+  const f = normPath(from).replace(/\/+$/, '').toLowerCase()
+  const mine = (t: Turn) => !!t.from && normPath(t.from).replace(/\/+$/, '').toLowerCase() === f
+  return {
+    stay: own.filter(t => !mine(t)),
+    back: own.filter(mine).map(({ from: _from, ...t }) => t),
+  }
+}
+
 export function byteSize(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).length
 }
@@ -157,10 +242,13 @@ export function byteSize(value: unknown): number {
 /**
  * Which other projects to drop from the store so that `key` at `bytes` fits
  * in `budget`, least recently used first. `fits` is false when it would not
- * fit even alone; the caller then trims its turns.
+ * fit even alone; the caller then trims its turns. A folder held by another is dropped only
+ * after every other one.
  */
 export function planBudget(index: StoreIndex, key: string, bytes: number, budget = BUDGET_BYTES): { evict: string[]; fits: boolean } {
-  const others = Object.entries(index).filter(([k]) => k !== key).sort((a, b) => a[1].used - b[1].used)
+  // A folder another one shows as brought goes last: its turns are on show there.
+  const others = Object.entries(index).filter(([k]) => k !== key)
+    .sort((a, b) => Number(!!a[1].heldBy) - Number(!!b[1].heldBy) || a[1].used - b[1].used)
   let total = bytes + others.reduce((sum, [, v]) => sum + v.bytes, 0)
   const evict: string[] = []
   for (const [k, v] of others) {

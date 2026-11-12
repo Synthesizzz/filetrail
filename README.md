@@ -153,7 +153,10 @@ The card keeps the last three git commands Claude ran through Bash (commit, push
 - **Export** writes the whole history as Markdown to `~/.claude/filetrail/exports/`.
 - Files git ignores (like a local notes file) are left out, and the header says how many turns were hidden.
 - History is kept across sessions for each project: the last 50 turns, up to 200 diff lines per edit, and 3 MiB in total across all projects (the least recently used project is dropped first).
-- History is kept per folder path, so a new worktree, a moved folder or a subfolder starts empty. An empty History then names the other folders that do have some (the three used most recently, with when and how big) and counts the rest, so it does not read as lost.
+- History is kept per folder path, so a new worktree, a moved folder or a subfolder starts empty. An empty History then names the other folders that do have some, this repo's first (its main folder, its other worktrees and subfolders), then the most recently used, with when and how big, and counts the rest, so it does not read as lost.
+- **Bring History from another folder:** press Bring beside a folder on the empty History page, or run `/trail bring` for the numbered list and `/trail bring 2` to pick one. Its turns show in History marked `↪ <folder>`, under a line `↪ N turns from <folder>` with Keep and Undo. Nothing is copied: the turns stay in the other folder, which the store drops last when it runs out of room. Keep (`/trail bring keep`) moves them here for good; turns past this folder's 50 stay where they were. Undo (`/trail unbring`) takes them back off before Keep, and moves them back after it. One folder can be shown at a time.
+- **A brought edit's buttons look in this folder first.** Show in Files and View file open the file at the same path here (a worktree of the same repo has the same files). When it is not here, View file shows the old path, and Show in Files says the file is in the other folder, or gone with it.
+- **Edits anywhere in the repo are recorded**, also when the session started in a subfolder: a file above that folder is named from the repo's top. Outside a git repo, History records the session's folder only.
 - On a wide pane (about 100 columns or more), History splits in two: turns on the left, the picked turn on the right, with a soft fill behind the picked row.
 
 ### The Agents tab
@@ -174,7 +177,10 @@ The tab sits beside Files and History from the start. Once Claude has started a 
 | `/trail` | Open the pane |
 | `/trail agents` | Open the pane on the Agents tab |
 | `/trail replay` | Open the latest turn that changed files |
-| `/trail export` | Save the history as Markdown and say where |
+| `/trail export` | Save the history as Markdown and say where (brought turns included) |
+| `/trail bring` | List the folders with History, this repo's first. `/trail bring <number>` shows that folder's History here, without copying it |
+| `/trail bring keep` | Move the History on show from another folder into this one |
+| `/trail unbring` | Take brought History back off (before Keep), or move kept turns back to their folder (after it) |
 | `/trail clear` | Say how many turns would be deleted. `/trail clear yes` deletes this project's history (other projects are left alone) |
 
 ## Keyboard
