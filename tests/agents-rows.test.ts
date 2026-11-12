@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { crabPose, factsOf, ganttCells, groupHead, grouped, modelName } from '../hooks/agents-view'
+import { crabPose, factsOf, ganttCells, groupHead, grouped, kindLine, modelName, tookText } from '../hooks/agents-view'
 import type { Helper } from '../types'
 
 const mate = (over: Partial<Helper> = {}): Helper => ({ id: 'a', type: 'developer', description: 'Do it', state: 'running', startedAt: 0, endedAt: null, calls: 0, files: [], ...over })
@@ -96,6 +96,19 @@ test('factsOf: the calls, "starting" before the first; "failed" when it failed; 
 
 test('factsOf: a narrow pane breaks the line only between facts, never inside "2 calls" or "Haiku 5.5"', () => {
   expect(factsOf(mate({ model: 'claude-haiku-5-5', state: 'failed', endedAt: 78_000, calls: 2 })).split(' · ')).toEqual(['Haiku\u00a05.5', 'failed', '2\u00a0calls'])
+})
+
+test('tookText: how long it worked never breaks inside "1m 4s", however narrow the pane', () => {
+  expect(tookText(mate({ state: 'done', startedAt: 0, endedAt: 64_000 }), 99_000)).toBe('1m 4s')
+  expect(tookText(mate({ startedAt: 0 }), 19_200)).toBe('19.2s')
+})
+
+test('kindLine: the type and its files; "no files yet" while it works, "no files" once it has ended', () => {
+  expect(kindLine(mate())).toBe('developer · no files yet')
+  expect(kindLine(mate({ state: 'done', endedAt: 5000 }))).toBe('developer · no files')
+  expect(kindLine(mate({ state: 'failed', endedAt: 5000 }))).toBe('developer · no files')
+  expect(kindLine(mate({ state: 'done', endedAt: 5000, files: [{ path: 'a', tone: 'read' }] }))).toBe('developer · 1 file')
+  expect(kindLine(mate({ files: [{ path: 'a', tone: 'read' }, { path: 'b', tone: 'write' }] }))).toBe('developer · 2 files')
 })
 
 test('factsOf: the model it runs on comes first, when known', () => {

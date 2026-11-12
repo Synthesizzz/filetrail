@@ -138,6 +138,18 @@ export function factsOf(mate: Helper): string {
   ].filter(Boolean).map(fact => fact.replace(/ /g, '\u00a0')).join(' · ')
 }
 
+/** How long a helper has worked, as `1m 4s` with a no-break space, so a narrow pane never splits it. */
+export function tookText(mate: Helper, now: number): string {
+  return formatDuration(elapsed(mate, now)).replace(/ /g, ' ')
+}
+
+/** The open row's first line: its type and how many files; "no files yet" only while it still works. */
+export function kindLine(mate: Helper): string {
+  const n = mate.files.length
+  if (n) return `${mate.type} · ${n} file${n === 1 ? '' : 's'}`
+  return `${mate.type} · ${mate.state === 'running' ? 'no files yet' : 'no files'}`
+}
+
 /** "3 calls · 2 files": what a helper has done, '' for nothing yet. */
 export function doneText(mate: Helper): string {
   const parts = [
@@ -212,7 +224,7 @@ function row(els: Els, mate: Helper, c: Ctx) {
               <Text weight="semibold">{task}</Text>
             </Button>
           </Box>
-          <Text key="took" dimColor>{formatDuration(elapsed(mate, c.now))}</Text>
+          <Text key="took" dimColor>{tookText(mate, c.now)}</Text>
         </Box>
         <Box key="under" flexDirection="row" gap={1} minWidth={0}>
           <Text key="bar" mono><Text dimColor>{IDLE.repeat(bar.lead)}</Text><Text color={look.color}>{BAR.repeat(bar.on)}</Text><Text dimColor>{IDLE.repeat(bar.tail)}</Text></Text>
@@ -220,7 +232,7 @@ function row(els: Els, mate: Helper, c: Ctx) {
         </Box>
         {c.open ? (
           <Box key="files" flexDirection="column" marginTop={1}>
-            <Text key="kind" dimColor>{`${mate.type}${mate.files.length ? ` · ${mate.files.length} file${mate.files.length === 1 ? '' : 's'}` : ' · no files yet'}`}</Text>
+            <Text key="kind" dimColor>{kindLine(mate)}</Text>
             {shown.map(f => {
               const at = splitPath(relTo(c.root, f.path))
               return (
