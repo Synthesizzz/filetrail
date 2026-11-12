@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { Step, Turn } from '../types'
 import { diffLineText, layoutFor } from '../hooks/history-view'

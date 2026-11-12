@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { addRun, disagreement, dismissRuns, formatDuration, runShown, testCommand, testScope } from '../hooks/test-runs'
 import type { TestRun } from '../types'

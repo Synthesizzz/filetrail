@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { findRefs, MAX_REFS, refLabel } from '../hooks/refs'
 

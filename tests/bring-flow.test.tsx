@@ -2,7 +2,7 @@
 // lists the folders, a number or the empty page's Bring button shows the origin's turns here
 // without copying a byte, Keep moves them for good, /trail unbring takes them back.
 
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { Turn } from '../types'
 import { byteSize, linkKey, projectKey } from '../hooks/history'

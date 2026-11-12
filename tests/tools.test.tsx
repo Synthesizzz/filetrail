@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { Tool } from '../hooks/tools'
 import { CELL, FLASH_FRAMES, FLASH_TICK_MS, SPIN, toolAt } from '../hooks/tools'

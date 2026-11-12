@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { FLASH_MS } from '../hooks/activity'
 import { commandKind } from '../hooks/bash'

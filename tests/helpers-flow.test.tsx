@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { Helper } from '../types'
 import { DONE, PANE, START, world } from './world'

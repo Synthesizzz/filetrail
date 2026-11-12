@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { fullCopy, openCommand, osOf, relativeCopy, revealCommand, REVEAL_ENV } from '../hooks/open'
 import { DONE, PANE, START, hasText, world, pressRow } from './world'

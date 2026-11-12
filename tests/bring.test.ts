@@ -1,7 +1,7 @@
 // Bringing History from another folder: which folders are offered, and how turns move
 // between two folders' keys. Pure functions, no engine.
 
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { Turn } from '../types'
 import {

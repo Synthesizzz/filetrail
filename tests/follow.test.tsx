@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { BROWSE_MS } from '../hooks/activity'
 import { PANE, START, hasRow, hasText, pressRow, world } from './world'
@@ -88,7 +88,7 @@ test('the whole tree is drawn, however short the pane: no page buttons, the pane
   await ui.unmount()
 })
 
-test('a folder the person opened folds too once they left it alone a while', { timeoutMs: 10_000 }, async ($, on) => {
+test('a folder the person opened folds too once they left it alone a while', async ($, on) => {
   const { clock } = world(on, { dirs: DIRS })
   await $.session.start(START)
   await clock.settle()

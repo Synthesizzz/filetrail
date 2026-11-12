@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { coveredBy, guardReason, mentionedGuard, toggled, writtenPath } from '../hooks/guard'
 

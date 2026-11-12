@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import type { Turn } from '../types'
 import { FLASH_MS, HOLD_MS, foldersTo, targetOf } from '../hooks/activity'

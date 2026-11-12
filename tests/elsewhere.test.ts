@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { elsewhereOf, projectKey } from '../hooks/history'
 import { ELSEWHERE_SHOWN, elsewhereText } from '../hooks/history-view'

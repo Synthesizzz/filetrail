@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './kit'
 
 import { crabPose, factsOf, ganttCells, grouped, modelName } from '../hooks/agents-view'
 import type { Helper } from '../types'
